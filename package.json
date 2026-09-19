@@ -1,0 +1,13 @@
+{
+  "name": "eval-system-2",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/build-static.mjs",
+    "start": "node scripts/server.mjs",
+    "test": "node tests/valuationEngine.test.js && node tests/financialIngestion.test.js",
+    "anthropic:audit3": "node scripts/anthropic-three-company-audit.mjs",
+    "anthropic:audit3:dry": "node scripts/anthropic-three-company-audit.mjs --dry-run"
+  }
+}
