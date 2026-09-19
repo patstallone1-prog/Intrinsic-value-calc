@@ -425,6 +425,16 @@ main {
   font-weight: 700;
 }
 
+.field-source--missing {
+  color: var(--warn);
+  font-weight: 700;
+}
+
+.field-source--verified {
+  color: var(--accent-2);
+  font-weight: 700;
+}
+
 .field input,
 .field select {
   width: 100%;

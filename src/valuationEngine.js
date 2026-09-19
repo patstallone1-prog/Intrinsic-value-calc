@@ -368,6 +368,14 @@ function div(numerator, denominator, fallback = 0) {
     : fallback
 }
 
+function impliedValueDifference(impliedValue, marketValue) {
+  const implied = Number(impliedValue)
+  const market = Number(marketValue)
+  return Number.isFinite(implied) && Number.isFinite(market) && market > 0
+    ? (implied - market) / market
+    : null
+}
+
 function weightedAverage(items) {
   const total = items.reduce((sum, item) => sum + item.weight, 0)
   return total > 0 ? items.reduce((sum, item) => sum + item.value * item.weight, 0) / total : 0
@@ -2749,4 +2757,5 @@ export {
   deriveContext,
   buildSignalLedger,
   softBand,
+  impliedValueDifference,
 }

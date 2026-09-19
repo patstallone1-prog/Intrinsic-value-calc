@@ -1,5 +1,5 @@
 import assert from "node:assert/strict"
-import { emptyNormalizedCompany, finalizeNormalizedInputs, normalizeMarketSeries, normalizeSecCompany } from "../src/financialIngestion.js"
+import { emptyNormalizedCompany, finalizeNormalizedInputs, normalizeMarketSeries, normalizeNasdaqCompany, normalizeSecCompany } from "../src/financialIngestion.js"
 
 function annual(val, start, end, fy) {
   return { val, start, end, fy, fp: "FY", form: "10-K", filed: `${Number(end.slice(0, 4)) + 1}-02-15` }
@@ -79,6 +79,15 @@ assert.equal(market.currentPrice, 30.5)
 assert.equal(market.averagePrice, 25)
 assert.equal(market.averageMarketCap, 1_000)
 
+const crossCheckedMarket = normalizeMarketSeries([
+  { provider: "Yahoo Finance", currentPrice: 30, prices: [20, 22, 24, 26, 28, 30], asOf: "2025-01-31" },
+  { provider: "Nasdaq", currentPrice: 30, currentMarketCap: 1_200, prices: [], asOf: "2025-01-31" },
+], 20)
+assert.equal(crossCheckedMarket.currentMarketCap, 1_200, "reported market cap should replace a mismatched price-times-filing-shares baseline")
+assert.equal(crossCheckedMarket.averageMarketCap, 1_000, "20-day average market value should use the cross-checked share basis")
+assert.equal(crossCheckedMarket.impliedSharesOutstanding, 40)
+assert.equal(crossCheckedMarket.crossChecks.find((check) => check.field === "marketCapitalization")?.status, "review")
+
 const finalized = finalizeNormalizedInputs(sec, market)
 assert.equal(finalized.inputs.sharePrice, 25)
 assert.equal(finalized.inputs.dividendYield, 0.02)
@@ -86,6 +95,58 @@ assert.equal(finalized.inputs.buybackYield, 0.01)
 assert.equal(finalized.inputs.marketCapOverride, undefined, "recent price should drive observed market value without a stale override")
 assert.ok(finalized.sourceNotes.sharePrice.includes("average"))
 assert.ok(finalized.coverage.percent > 0.7)
+
+const crossSource = finalizeNormalizedInputs(sec, market, [{
+  provider: "Nasdaq",
+  inputs: { revenue: 1_400, cash: 250 },
+  availableFields: ["revenue", "cash"],
+  provenance: [],
+  warnings: [],
+}])
+assert.equal(crossSource.crossChecks.find((check) => check.field === "revenue")?.status, "review")
+assert.equal(crossSource.crossChecks.find((check) => check.field === "cash")?.status, "matched")
+
+const zeroFacts = structuredClone(facts)
+zeroFacts["us-gaap"].ResearchAndDevelopmentExpenseExcludingAcquiredInProcessCost.units.USD[0].val = 0
+const measuredZero = finalizeNormalizedInputs(normalizeSecCompany({
+  company: { ticker: "ZERO", title: "Measured Zero Co", cik: "0000000002" },
+  submissions: { sicDescription: "Prepackaged Software" },
+  facts: zeroFacts,
+}), market)
+assert.equal(measuredZero.inputs.rdPct, 0)
+assert.equal(measuredZero.fieldStatus.rdPct, "measured-zero", "a source row containing zero must remain distinguishable from missing data")
+assert.ok(!measuredZero.missing.includes("rdPct"))
+
+const nasdaq = normalizeNasdaqCompany({
+  ticker: "TEST",
+  financials: { data: {
+    incomeStatementTable: { headers: { value2: "12/31/2024" }, rows: [
+      { value1: "Total Revenue", value2: "$1,000", value3: "$800" },
+      { value1: "Gross Profit", value2: "$450", value3: "$320" },
+      { value1: "Operating Income", value2: "$150", value3: "$120" },
+      { value1: "Net Income", value2: "$100", value3: "$80" },
+      { value1: "Research and Development", value2: "$0", value3: "$0" },
+    ] },
+    balanceSheetTable: { rows: [
+      { value1: "Cash and Cash Equivalents", value2: "$200" },
+      { value1: "Short-Term Investments", value2: "$50" },
+      { value1: "Long-Term Debt", value2: "$120" },
+      { value1: "Total Equity", value2: "$700" },
+    ] },
+    cashFlowTable: { rows: [
+      { value1: "Depreciation", value2: "$30" },
+      { value1: "Net Cash Flow-Operating", value2: "$170" },
+      { value1: "Capital Expenditures", value2: "-$50" },
+    ] },
+    financialRatiosTable: { rows: [{ value1: "After Tax ROE", value2: "14.2857%" }] },
+  } },
+  info: { data: { companyName: "Test Public Co", primaryData: { lastSalePrice: "$30", lastTradeTimestamp: "Jan 31, 2025" } } },
+  summary: { data: { summaryData: { Sector: { value: "Software" }, Industry: { value: "Prepackaged Software" }, MarketCap: { value: "1,200,000" }, AnnualizedDividend: { value: "$0.00" } } } },
+})
+assert.equal(nasdaq.inputs.revenue, 1_000_000)
+assert.equal(nasdaq.inputs.rdPct, 0)
+assert.ok(nasdaq.availableFields.includes("rdPct"), "Nasdaq zero R&D should be treated as measured")
+assert.equal(nasdaq.marketSeries.annualDividendAvailable, true)
 
 const globalFallback = finalizeNormalizedInputs(emptyNormalizedCompany("GLOBAL"), market, [{
   provider: "Example Global Feed",

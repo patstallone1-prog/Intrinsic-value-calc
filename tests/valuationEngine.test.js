@@ -1,6 +1,9 @@
 import assert from "node:assert/strict"
 import { pathToFileURL } from "node:url"
-import { DEFAULT_INPUTS, FIXTURES, computeValuation, softBand } from "../src/valuationEngine.js"
+import { DEFAULT_INPUTS, FIXTURES, computeValuation, impliedValueDifference, softBand } from "../src/valuationEngine.js"
+
+assert.ok(Math.abs(impliedValueDifference(1_100_000_000, 1_000_000_000) - 0.1) < 1e-12, "1.1B implied versus 1.0B market should be 10% upside")
+assert.equal(impliedValueDifference(1_100_000_000, 0), null, "missing market value should not produce a percentage")
 
 function finite(value, label) {
   assert.equal(typeof value, "number", `${label} should be numeric`)

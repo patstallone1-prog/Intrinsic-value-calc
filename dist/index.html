@@ -432,6 +432,16 @@ main {
   font-weight: 700;
 }
 
+.field-source--missing {
+  color: var(--warn);
+  font-weight: 700;
+}
+
+.field-source--verified {
+  color: var(--accent-2);
+  font-weight: 700;
+}
+
 .field input,
 .field select {
   width: 100%;
@@ -1137,6 +1147,14 @@ function div(numerator, denominator, fallback = 0) {
   return Number.isFinite(numerator) && Number.isFinite(denominator) && Math.abs(denominator) > 1e-9
     ? numerator / denominator
     : fallback
+}
+
+function impliedValueDifference(impliedValue, marketValue) {
+  const implied = Number(impliedValue)
+  const market = Number(marketValue)
+  return Number.isFinite(implied) && Number.isFinite(market) && market > 0
+    ? (implied - market) / market
+    : null
 }
 
 function weightedAverage(items) {
@@ -3531,6 +3549,7 @@ function saveDraft() {
       ticker: state.ticker,
       ingestionAudit: state.ingestionAudit,
       marketSnapshot: state.marketSnapshot,
+      sourceNotes: state.sourceNotes,
     }))
   } catch {
     // Draft persistence is helpful, but valuation should keep working without storage.
@@ -3562,7 +3581,7 @@ const state = {
   reportFile: null,
   extractionJson: "",
   extractionStatus: "",
-  sourceNotes: {},
+  sourceNotes: savedIngestionMeta.sourceNotes || {},
   humanReview: [],
 }
 
@@ -3850,6 +3869,15 @@ function escapeHtml(value) {
 
 function renderField(field) {
   const value = state.inputs[field.key]
+  const sourceStatus = state.ingestionAudit?.fieldStatus?.[field.key]
+  const isMissingNumeric = sourceStatus === "missing" && typeof value === "number" && value === 0
+  const sourceText = sourceStatus === "measured-zero"
+    ? "Measured zero from source"
+    : sourceStatus === "missing"
+      ? "Missing - enter or verify"
+      : sourceStatus === "manual-zero"
+        ? "Manual zero"
+        : formatValue(value, field.type)
   if (field.type === "select") {
     return `
       <label class="field">
@@ -3874,8 +3902,8 @@ function renderField(field) {
   return `
     <label class="field">
       <span>${field.label}</span>
-      <input data-field="${field.key}" type="${field.type === "text" ? "text" : "number"}" value="${escapeHtml(inputDisplayValue(value, field.type))}" min="${min}" max="${max}" step="${step}" />
-      <small>${formatValue(value, field.type)}</small>
+      <input data-field="${field.key}" type="${field.type === "text" ? "text" : "number"}" value="${isMissingNumeric ? "" : escapeHtml(inputDisplayValue(value, field.type))}" min="${min}" max="${max}" step="${step}" />
+      <small class="${sourceStatus === "missing" ? "field-source--missing" : sourceStatus === "measured-zero" || sourceStatus === "manual-zero" ? "field-source--verified" : ""}">${escapeHtml(sourceText)}</small>
     </label>
   `
 }
@@ -3947,6 +3975,9 @@ function renderAllFieldsReview() {
   const context = deriveContext(normalizeInputs(state.inputs))
   const visibleFields = fields.filter((field) => state.advanced || fieldVisible(field, context))
   const groups = [...new Set(visibleFields.map((field) => field.group))]
+  const crossChecks = state.ingestionAudit?.crossChecks || []
+  const matchedChecks = crossChecks.filter((check) => check.status === "matched").length
+  const measuredZeros = Object.values(state.ingestionAudit?.fieldStatus || {}).filter((status) => status === "measured-zero").length
   const auditIssues = [
     ...(state.ingestionAudit?.missing || []).map((field) => `Missing: ${fieldLabel(field)}`),
     ...(state.ingestionAudit?.warnings || []),
@@ -3964,6 +3995,12 @@ function renderAllFieldsReview() {
         </div>
       </div>
       <p class="muted">Edit only a value that the source audit marks missing or incorrect. Derived ratios will be replaced by your explicit override.</p>
+      ${(crossChecks.length || measuredZeros) ? `
+        <div class="source-strip">
+          ${crossChecks.length ? `<span class="pill">${matchedChecks}/${crossChecks.length} cross-source checks matched</span>` : ""}
+          ${measuredZeros ? `<span class="pill">${measuredZeros} measured zero${measuredZeros === 1 ? "" : "s"}</span>` : ""}
+        </div>
+      ` : ""}
       ${auditIssues.length ? `<div class="warning-list">${auditIssues.map((issue) => `<div class="warning">${escapeHtml(issue)}</div>`).join("")}</div>` : ""}
       ${groups.map((group) => `
         <div class="review-field-group">
@@ -3979,6 +4016,8 @@ function renderAutoIntake() {
   const review = automationReview(state.inputs)
   const file = state.reportFile
   const audit = state.ingestionAudit
+  const crossChecks = audit?.crossChecks || []
+  const matchedChecks = crossChecks.filter((check) => check.status === "matched").length
   return `
     <div class="auto-layout">
       <section class="panel intake-panel">
@@ -4013,8 +4052,9 @@ function renderAutoIntake() {
         </div>
         ${audit ? `
           <div class="source-strip">
-            ${audit.providers.map((provider) => `<span class="pill">${escapeHtml(provider)}</span>`).join("")}
+            ${(audit.providers || []).map((provider) => `<span class="pill">${escapeHtml(provider)}</span>`).join("")}
             <span class="muted">Financial period ${escapeHtml(audit.periodEnd || "unknown")}</span>
+            ${crossChecks.length ? `<span class="muted">${matchedChecks}/${crossChecks.length} independent checks matched</span>` : ""}
           </div>
           ${(audit.warnings.length || audit.missing.length) ? `
             <div class="review-alert">
@@ -4100,7 +4140,8 @@ function renderResults(result) {
   const comparison = result.ledger.budgets.financialComparison
   const marketValue = state.marketSnapshot?.averageMarketCap || result.tracks.market.paths.observedEquity || 0
   const currentMarketValue = state.marketSnapshot?.currentMarketCap || marketValue
-  const valueDifference = marketValue > 0 ? result.outputs.fairCommonEquity / marketValue - 1 : null
+  const valueDifference = impliedValueDifference(result.outputs.fairCommonEquity, marketValue)
+  const averageWindow = state.marketSnapshot?.tradingDays || 0
   const trackRows = [
     ["DCF", "dcf", result.tracks.dcf],
     ["Direct Comps", "directComps", result.tracks.directComps],
@@ -4120,14 +4161,14 @@ function renderResults(result) {
             <p class="muted">Range ${money(result.bands.final.low)} - ${money(result.bands.final.high)}</p>
           </div>
           <div class="market-value-block">
-            <p class="eyebrow">${state.marketSnapshot?.tradingDays ? `${state.marketSnapshot.tradingDays}-day average market value` : "Observed market value"}</p>
+            <p class="eyebrow">${averageWindow ? `${averageWindow}-day average market value` : "Observed market value"}</p>
             <h3>${marketValue > 0 ? money(marketValue) : "Unavailable"}</h3>
             ${currentMarketValue > 0 && currentMarketValue !== marketValue ? `<p class="muted">Current ${money(currentMarketValue)}</p>` : ""}
           </div>
           <div class="difference-block ${valueDifference !== null && valueDifference < 0 ? "difference-block--negative" : ""}">
-            <span>Estimated difference</span>
+            <span>Implied vs ${averageWindow || "observed"}${averageWindow ? "-day average" : " market"}</span>
             <strong>${valueDifference === null ? "N/A" : `${valueDifference >= 0 ? "+" : ""}${pct(valueDifference, 1)}`}</strong>
-            <small>${valueDifference === null ? "Load market data to compare" : valueDifference >= 0 ? "above recent market value" : "below recent market value"}</small>
+            <small>${valueDifference === null ? "Load market data to compare" : `(implied value - average market value) / average market value`}</small>
           </div>
         </div>
         <div>
@@ -4374,6 +4415,7 @@ document.addEventListener("input", (event) => {
   const tag = event.target.dataset.tag
   if (event.target.dataset.ticker !== undefined) {
     state.ticker = event.target.value.toUpperCase().replace(/[^A-Z0-9.-]/g, "")
+    event.target.value = state.ticker
     return
   }
   if (event.target.dataset.extractionJson !== undefined) {
@@ -4383,8 +4425,17 @@ document.addEventListener("input", (event) => {
   if (fieldKey) {
     const field = fields.find((item) => item.key === fieldKey)
     state.inputs[fieldKey] = parseInputValue(event.target.value, field.type, event.target.checked)
+    const isNumericField = ["money", "number", "score", "score5", "multiple", "percent"].includes(field.type)
+    const isManualZero = isNumericField && Number(state.inputs[fieldKey]) === 0
+    if (state.ingestionAudit?.fieldStatus && !["select", "checkbox"].includes(field.type)) {
+      state.ingestionAudit.fieldStatus[fieldKey] = isManualZero ? "manual-zero" : "manual"
+    }
     saveDraft()
-    render()
+    const note = event.target.closest(".field")?.querySelector("small")
+    if (note && !["select", "checkbox"].includes(field.type)) {
+      note.textContent = isManualZero ? "Manual zero" : formatValue(state.inputs[fieldKey], field.type)
+      note.className = isManualZero ? "field-source--verified" : ""
+    }
   }
   if (tag) {
     const selected = new Set(state.inputs.tags || [])
@@ -4392,11 +4443,16 @@ document.addEventListener("input", (event) => {
     else selected.delete(tag)
     state.inputs.tags = [...selected]
     saveDraft()
-    render()
+    event.target.closest(".tag")?.classList.toggle("tag--selected", event.target.checked)
   }
 })
 
 document.addEventListener("change", (event) => {
+  const fieldKey = event.target.dataset.field
+  if (fieldKey) {
+    const field = fields.find((item) => item.key === fieldKey)
+    if (field && ["select", "checkbox"].includes(field.type)) render()
+  }
   if (event.target.dataset.action === "upload-report") {
     state.reportFile = event.target.files?.[0] || null
     state.extractionStatus = state.reportFile ? "Report attached for exception review. AI remains off." : ""
@@ -4433,6 +4489,8 @@ async function ingestCompany() {
       missing: payload.missing || [],
       periodEnd: payload.periodEnd,
       provenance: payload.provenance || [],
+      fieldStatus: payload.fieldStatus || {},
+      crossChecks: payload.crossChecks || [],
     }
     state.ingestionStatus = `Loaded ${payload.company?.title || ticker}. Review the qualitative questions below.`
     state.step = 0

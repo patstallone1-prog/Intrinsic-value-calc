@@ -6,6 +6,7 @@ import {
   fetchAlphaVantageSupplement,
   emptyNormalizedCompany,
   fetchFmpSupplement,
+  fetchNasdaqSupplement,
   fetchSecBundle,
   fetchYahooMarketSeries,
   finalizeNormalizedInputs,
@@ -39,6 +40,10 @@ async function ingest(ticker) {
       providerWarnings.push(`Yahoo Finance unavailable: ${error.message}`)
       return null
     }),
+    fetchNasdaqSupplement(cacheKey).catch((error) => {
+      providerWarnings.push(`Nasdaq unavailable: ${error.message}`)
+      return null
+    }),
     fetchAlphaVantageSupplement(cacheKey, process.env.ALPHA_VANTAGE_API_KEY).catch((error) => {
       providerWarnings.push(`Alpha Vantage unavailable: ${error.message}`)
       return null
@@ -48,13 +53,13 @@ async function ingest(ticker) {
       return null
     }),
   ]
-  const [bundle, yahoo, alpha, fmp] = await Promise.all(optionalTasks)
+  const [bundle, yahoo, nasdaq, alpha, fmp] = await Promise.all(optionalTasks)
   const sec = bundle ? normalizeSecCompany(bundle) : emptyNormalizedCompany(cacheKey)
-  const supplements = [alpha, fmp].filter(Boolean)
+  const supplements = [nasdaq, alpha, fmp].filter(Boolean)
   if (!bundle && !supplements.some((item) => item.inputs?.revenue > 0)) {
     throw new Error(`No financial-statement provider returned data for ${cacheKey}. Configure ALPHA_VANTAGE_API_KEY or FMP_API_KEY for non-SEC issuers.`)
   }
-  const marketSources = [yahoo, alpha?.marketSeries, fmp?.marketSeries].filter(Boolean)
+  const marketSources = [yahoo, nasdaq?.marketSeries, alpha?.marketSeries, fmp?.marketSeries].filter(Boolean)
   const shares = sec.inputs.sharesOutstanding || supplements.find((item) => item.inputs?.sharesOutstanding)?.inputs.sharesOutstanding || 0
   const marketSnapshot = normalizeMarketSeries(marketSources, shares)
   const normalized = finalizeNormalizedInputs(sec, marketSnapshot, supplements)

@@ -174,6 +174,7 @@ export function emptyNormalizedCompany(ticker) {
       capitalStatus: "Public",
     },
     rawMetrics: { dividendsPaid: 0, buybacks: 0 },
+    measuredRawMetrics: { dividendsPaid: false, buybacks: false },
     sourceNotes: {},
     provenance: [],
     coverage: [],
@@ -293,18 +294,6 @@ export function normalizeSecCompany({ company, submissions = {}, facts = {} }) {
     goodwill: goodwill.value, intangibles: intangibles.value, propertyPlantEquipment: ppe.value, land: land.value,
   }
 
-  const sourceNotes = {}
-  for (const [field, value] of Object.entries(inputs)) {
-    if (typeof value !== "number" || value === 0) continue
-    sourceNotes[field] = `SEC Company Facts; normalized from annual filing ending ${periodEnd || "latest"}`
-  }
-  const provenance = [
-    sourceRecord("SEC Company Facts", "revenue", revenue, revenueSeries.at(-1)?.tag || "", periodEnd),
-    sourceRecord("SEC Company Facts", "netIncome", netIncome.value, netIncome.tag, periodEnd),
-    sourceRecord("SEC Company Facts", "operatingCashFlow", operatingCashFlow.value, operatingCashFlow.tag, periodEnd),
-    sourceRecord("SEC Company Facts", "sharesOutstanding", shares.value, shares.tag, shares.row?.end || ""),
-  ].filter((item) => item.value !== 0)
-
   const availableFields = new Set()
   if (revenueSeries.length) availableFields.add("revenue")
   if (revenueSeries.length > 1) availableFields.add("revenueGrowth")
@@ -325,6 +314,16 @@ export function normalizeSecCompany({ company, submissions = {}, facts = {} }) {
   if (shares.row) availableFields.add("sharesOutstanding")
   if (eps.row) availableFields.add("eps")
   const coverage = [...availableFields]
+  const sourceNotes = Object.fromEntries(coverage.map((field) => [
+    field,
+    `SEC Company Facts; ${inputs[field] === 0 ? "measured zero" : "normalized value"} from annual filing ending ${periodEnd || "latest"}`,
+  ]))
+  const provenance = [
+    revenueSeries.length ? sourceRecord("SEC Company Facts", "revenue", revenue, revenueSeries.at(-1)?.tag || "", periodEnd) : null,
+    netIncome.row ? sourceRecord("SEC Company Facts", "netIncome", netIncome.value, netIncome.tag, periodEnd) : null,
+    operatingCashFlow.row ? sourceRecord("SEC Company Facts", "operatingCashFlow", operatingCashFlow.value, operatingCashFlow.tag, periodEnd) : null,
+    shares.row ? sourceRecord("SEC Company Facts", "sharesOutstanding", shares.value, shares.tag, shares.row?.end || "") : null,
+  ].filter(Boolean)
   return {
     provider: "SEC",
     ticker: company.ticker,
@@ -332,6 +331,7 @@ export function normalizeSecCompany({ company, submissions = {}, facts = {} }) {
     periodEnd,
     inputs,
     rawMetrics,
+    measuredRawMetrics: { dividendsPaid: Boolean(dividendsPaid.row), buybacks: Boolean(buybacks.row) },
     sourceNotes,
     provenance,
     coverage,
@@ -340,28 +340,184 @@ export function normalizeSecCompany({ company, submissions = {}, facts = {} }) {
   }
 }
 
+function parseNasdaqNumber(raw, scale = 1) {
+  if (raw === null || raw === undefined) return null
+  const text = String(raw).trim()
+  if (!text || text === "--" || /^n\/a$/i.test(text)) return null
+  const percent = text.endsWith("%")
+  const negative = text.startsWith("-") || /^\(.*\)$/.test(text)
+  const parsed = Number(text.replace(/[$,%(),]/g, "").replace(/^-/, ""))
+  if (!Number.isFinite(parsed)) return null
+  const signed = negative ? -parsed : parsed
+  return percent ? signed / 100 : signed * scale
+}
+
+function nasdaqRows(table) {
+  return Array.isArray(table?.rows) ? table.rows : []
+}
+
+function nasdaqRowValue(table, labels, column = "value2", scale = 1_000) {
+  const accepted = Array.isArray(labels) ? labels : [labels]
+  const row = nasdaqRows(table).find((item) => accepted.some((label) => String(item.value1 || "").trim().toLowerCase() === label.toLowerCase()))
+  return row ? parseNasdaqNumber(row[column], scale) : null
+}
+
+function nasdaqDate(value) {
+  const parsed = new Date(value)
+  return Number.isNaN(parsed.getTime()) ? "" : parsed.toISOString().slice(0, 10)
+}
+
+export function normalizeNasdaqCompany({ ticker, financials = {}, info = {}, summary = {} }) {
+  const financialData = financials.data || financials
+  const infoData = info.data || info
+  const summaryData = summary.data || summary
+  const income = financialData?.incomeStatementTable
+  const balance = financialData?.balanceSheetTable
+  const cashFlow = financialData?.cashFlowTable
+  const ratios = financialData?.financialRatiosTable
+  const periodEnd = nasdaqDate(income?.headers?.value2 || "")
+
+  const revenue = nasdaqRowValue(income, "Total Revenue")
+  const priorRevenue = nasdaqRowValue(income, "Total Revenue", "value3")
+  const grossProfit = nasdaqRowValue(income, "Gross Profit")
+  const priorGrossProfit = nasdaqRowValue(income, "Gross Profit", "value3")
+  const operatingIncome = nasdaqRowValue(income, "Operating Income")
+  const depreciationAmortization = nasdaqRowValue(cashFlow, "Depreciation")
+  const netIncome = nasdaqRowValue(income, ["Net Income", "Net Income-Cont. Operations"])
+  const operatingCashFlow = nasdaqRowValue(cashFlow, "Net Cash Flow-Operating")
+  const capex = nasdaqRowValue(cashFlow, "Capital Expenditures")
+  const rd = nasdaqRowValue(income, "Research and Development")
+  const cash = nasdaqRowValue(balance, "Cash and Cash Equivalents")
+  const shortTermInvestments = nasdaqRowValue(balance, "Short-Term Investments")
+  const debtCurrent = nasdaqRowValue(balance, "Short-Term Debt / Current Portion of Long-Term Debt")
+  const debtLongTerm = nasdaqRowValue(balance, "Long-Term Debt")
+  const inventory = nasdaqRowValue(balance, "Inventory")
+  const ar = nasdaqRowValue(balance, "Net Receivables")
+  const ap = nasdaqRowValue(balance, "Accounts Payable")
+  const assets = nasdaqRowValue(balance, "Total Assets")
+  const liabilities = nasdaqRowValue(balance, "Total Liabilities")
+  const equity = nasdaqRowValue(balance, "Total Equity")
+  const ppe = nasdaqRowValue(balance, "Fixed Assets")
+  const roe = nasdaqRowValue(ratios, "After Tax ROE", "value2", 1)
+  const currentPrice = parseNasdaqNumber(infoData?.primaryData?.lastSalePrice, 1)
+  const currentMarketCap = parseNasdaqNumber(summaryData?.summaryData?.MarketCap?.value, 1)
+  const annualDividendPerShare = parseNasdaqNumber(summaryData?.summaryData?.AnnualizedDividend?.value, 1)
+  const sharesOutstanding = currentPrice > 0 && currentMarketCap > 0 ? currentMarketCap / currentPrice : null
+
+  const totalCash = cash === null && shortTermInvestments === null ? null : (cash || 0) + (shortTermInvestments || 0)
+  const debt = debtCurrent === null && debtLongTerm === null ? null : Math.max(debtCurrent || 0, 0) + Math.max(debtLongTerm || 0, 0)
+  const revenueGrowth = revenue !== null && priorRevenue > 0 ? (revenue - priorRevenue) / priorRevenue : null
+  const grossMargin = revenue > 0 && grossProfit !== null ? grossProfit / revenue : null
+  const priorGrossMargin = priorRevenue > 0 && priorGrossProfit !== null ? priorGrossProfit / priorRevenue : null
+  const marginChangeYoy = grossMargin !== null && priorGrossMargin !== null ? grossMargin - priorGrossMargin : null
+  const ebitda = operatingIncome !== null && depreciationAmortization !== null ? operatingIncome + Math.abs(depreciationAmortization) : null
+  const freeCashFlow = operatingCashFlow !== null && capex !== null ? operatingCashFlow - Math.abs(capex) : null
+  const classification = classifyCompany(`${summaryData?.summaryData?.Sector?.value || ""} ${summaryData?.summaryData?.Industry?.value || ""}`)
+  const lifecycle = lifecycleFromFinancials(revenueGrowth || 0, netIncome || 0, freeCashFlow || 0)
+
+  const measured = new Set()
+  const inputs = {
+    companyName: infoData?.companyName || ticker,
+    ...classification,
+    ...lifecycle,
+    capitalStatus: "Public",
+  }
+  const setMeasured = (field, value) => {
+    if (value === null || value === undefined || !Number.isFinite(value)) return
+    inputs[field] = round(value, field === "eps" ? 4 : 2)
+    measured.add(field)
+  }
+  setMeasured("revenue", revenue)
+  setMeasured("revenueGrowth", revenueGrowth)
+  setMeasured("grossMargin", grossMargin)
+  setMeasured("marginChangeYoy", marginChangeYoy)
+  setMeasured("opexRatio", revenue > 0 && grossProfit !== null && ebitda !== null ? Math.max((grossProfit - ebitda) / revenue, 0) : null)
+  setMeasured("rdPct", revenue > 0 && rd !== null ? Math.abs(rd) / revenue : null)
+  setMeasured("cash", totalCash)
+  setMeasured("debt", debt)
+  setMeasured("capexPct", revenue > 0 && capex !== null ? Math.abs(capex) / revenue : null)
+  setMeasured("inventory", inventory)
+  setMeasured("ar", ar)
+  setMeasured("ap", ap)
+  setMeasured("assetBackingValue", equity !== null ? equity : assets !== null && liabilities !== null ? assets - liabilities : null)
+  setMeasured("roe", roe)
+  setMeasured("sharesOutstanding", sharesOutstanding)
+  if (ppe !== null) {
+    inputs.asset1Type = "Equipment / Machinery"
+    inputs.asset1Value = round(ppe, 2)
+  }
+
+  const sourceNotes = Object.fromEntries([...measured].map((field) => [field, `Nasdaq annual financials; ${inputs[field] === 0 ? "measured zero" : "reported or derived value"} for ${periodEnd || "latest period"}`]))
+  const provenance = [...measured].map((field) => sourceRecord("Nasdaq", field, inputs[field], "annual financials", periodEnd))
+  return {
+    provider: "Nasdaq",
+    ticker,
+    periodEnd,
+    inputs,
+    sourceNotes,
+    availableFields: [...measured],
+    coverage: [...measured],
+    provenance,
+    warnings: [],
+    marketSeries: {
+      provider: "Nasdaq",
+      currentPrice: currentPrice || 0,
+      currentMarketCap: currentMarketCap || 0,
+      annualDividendPerShare: annualDividendPerShare || 0,
+      annualDividendAvailable: annualDividendPerShare !== null,
+      prices: [],
+      asOf: nasdaqDate(infoData?.primaryData?.lastTradeTimestamp || ""),
+    },
+  }
+}
+
 export function normalizeMarketSeries(seriesByProvider, sharesOutstanding = 0) {
   const valid = seriesByProvider.filter((item) => item && (item.currentPrice > 0 || item.prices?.length))
-  const currentCandidates = valid.map((item) => item.currentPrice).filter((value) => value > 0)
-  const currentPrice = median(currentCandidates)
+  const currentCandidates = valid.filter((item) => item.currentPrice > 0).map((item) => ({ provider: item.provider, value: item.currentPrice }))
+  const currentPrice = median(currentCandidates.map((item) => item.value))
   const primary = valid.find((item) => item.provider === "Yahoo Finance" && item.prices?.length)
     || valid.find((item) => item.prices?.length)
     || valid[0]
   const recentPrices = (primary?.prices || []).filter((value) => value > 0).slice(-20)
   const averagePrice = recentPrices.length ? recentPrices.reduce((sum, value) => sum + value, 0) / recentPrices.length : currentPrice
-  const divergence = currentCandidates.length > 1 && currentPrice > 0
-    ? Math.max(...currentCandidates.map((value) => Math.abs(value - currentPrice) / currentPrice))
-    : 0
+  const marketCapCandidates = valid.filter((item) => item.currentMarketCap > 0).map((item) => ({ provider: item.provider, value: item.currentMarketCap }))
+  const reportedMarketCap = median(marketCapCandidates.map((item) => item.value))
+  const priceDerivedMarketCap = currentPrice > 0 && sharesOutstanding > 0 ? currentPrice * sharesOutstanding : 0
+  const currentMarketCap = reportedMarketCap || priceDerivedMarketCap
+  const averageMarketCap = currentMarketCap > 0 && currentPrice > 0
+    ? currentMarketCap * averagePrice / currentPrice
+    : averagePrice * sharesOutstanding
+  const impliedSharesOutstanding = reportedMarketCap > 0 && currentPrice > 0 ? reportedMarketCap / currentPrice : sharesOutstanding
+  const crossChecks = []
+  const warnings = []
+  const priceAnchor = currentCandidates.find((item) => item.provider === primary?.provider) || currentCandidates[0]
+  for (const candidate of currentCandidates) {
+    if (!priceAnchor || candidate.provider === priceAnchor.provider) continue
+    const difference = Math.abs(candidate.value - priceAnchor.value) / Math.max(Math.abs(priceAnchor.value), 1e-9)
+    const status = difference <= 0.03 ? "matched" : "review"
+    crossChecks.push({ field: "sharePrice", primaryProvider: priceAnchor.provider, primaryValue: round(priceAnchor.value, 4), comparisonProvider: candidate.provider, comparisonValue: round(candidate.value, 4), differencePct: round(difference), status })
+    if (status === "review") warnings.push(`Share price differs by ${round(difference * 100, 1)}% between ${priceAnchor.provider} and ${candidate.provider}.`)
+  }
+  if (reportedMarketCap > 0 && priceDerivedMarketCap > 0) {
+    const difference = Math.abs(reportedMarketCap - priceDerivedMarketCap) / Math.max(Math.abs(reportedMarketCap), 1)
+    const status = difference <= 0.08 ? "matched" : "review"
+    crossChecks.push({ field: "marketCapitalization", primaryProvider: marketCapCandidates.map((item) => item.provider).join(" + "), primaryValue: round(reportedMarketCap, 2), comparisonProvider: "price x filing shares", comparisonValue: round(priceDerivedMarketCap, 2), differencePct: round(difference), status })
+    if (status === "review") warnings.push(`Reported market capitalization differs by ${round(difference * 100, 1)}% from price multiplied by filing shares; reported market capitalization is used for the comparison baseline.`)
+  }
+  const dividendSource = valid.find((item) => item.annualDividendAvailable) || valid.find((item) => item.annualDividendPerShare > 0)
   return {
     currentPrice: round(currentPrice, 4),
     averagePrice: round(averagePrice, 4),
     tradingDays: recentPrices.length,
-    currentMarketCap: round(currentPrice * sharesOutstanding, 2),
-    averageMarketCap: round(averagePrice * sharesOutstanding, 2),
-    annualDividendPerShare: round(number(primary?.annualDividendPerShare), 6),
+    currentMarketCap: round(currentMarketCap, 2),
+    averageMarketCap: round(averageMarketCap, 2),
+    impliedSharesOutstanding: round(impliedSharesOutstanding, 2),
+    annualDividendPerShare: round(number(dividendSource?.annualDividendPerShare), 6),
+    annualDividendAvailable: Boolean(dividendSource),
     asOf: primary?.asOf || "",
-    providers: valid.map((item) => item.provider),
-    warning: divergence > 0.03 ? `Market-price providers differ by ${round(divergence * 100, 1)}%.` : "",
+    providers: [...new Set(valid.map((item) => item.provider))],
+    crossChecks,
+    warning: warnings.join(" "),
   }
 }
 
@@ -371,8 +527,12 @@ export function finalizeNormalizedInputs(secNormalized, marketSnapshot, suppleme
   const warnings = [...secNormalized.warnings]
   const provenance = [...secNormalized.provenance]
   const availableFields = new Set(secNormalized.availableFields || secNormalized.coverage || [])
+  const providerByField = new Map([...availableFields].map((field) => [field, secNormalized.provider || "SEC"]))
+  const crossChecks = [...(marketSnapshot.crossChecks || [])]
+  const ratioFields = new Set(["revenueGrowth", "grossMargin", "marginChangeYoy", "opexRatio", "rdPct", "capexPct", "roe", "rotce", "dividendYield", "buybackYield"])
 
   for (const supplement of supplements) {
+    const explicitlyAvailable = new Set(supplement.availableFields || supplement.coverage || [])
     for (const [field, value] of Object.entries(supplement.inputs || {})) {
       if (typeof value === "string") {
         if (!inputs[field] || inputs[field] === "Other" || inputs[field] === secNormalized.ticker) {
@@ -381,13 +541,32 @@ export function finalizeNormalizedInputs(secNormalized, marketSnapshot, suppleme
         }
         continue
       }
-      if (typeof value !== "number" || value === 0) continue
-      availableFields.add(field)
-      if (!(typeof inputs[field] === "number" && inputs[field] !== 0)) {
+      if (typeof value !== "number" || !Number.isFinite(value)) continue
+      const supplementMeasured = explicitlyAvailable.has(field) || (!supplement.availableFields && value !== 0)
+      if (!supplementMeasured) continue
+      if (!availableFields.has(field)) {
         inputs[field] = value
-        sourceNotes[field] = `${supplement.provider}; fallback because primary filing value was unavailable`
-      } else if (Math.abs(inputs[field] - value) / Math.max(Math.abs(inputs[field]), 1) > 0.12) {
-        warnings.push(`${field} differs by more than 12% between SEC and ${supplement.provider}; SEC retained.`)
+        availableFields.add(field)
+        providerByField.set(field, supplement.provider)
+        sourceNotes[field] = `${supplement.provider}; ${value === 0 ? "measured zero" : "fallback value"} because the primary filing value was unavailable`
+      } else if (typeof inputs[field] === "number" && Number.isFinite(inputs[field])) {
+        const primaryValue = inputs[field]
+        const absoluteDifference = Math.abs(primaryValue - value)
+        const relativeDifference = absoluteDifference / Math.max(Math.abs(primaryValue), Math.abs(value), 1e-9)
+        const matched = ratioFields.has(field)
+          ? absoluteDifference <= 0.03 || relativeDifference <= 0.2
+          : relativeDifference <= 0.12
+        const check = {
+          field,
+          primaryProvider: providerByField.get(field) || secNormalized.provider || "SEC",
+          primaryValue: round(primaryValue, 6),
+          comparisonProvider: supplement.provider,
+          comparisonValue: round(value, 6),
+          differencePct: round(relativeDifference),
+          status: matched ? "matched" : "review",
+        }
+        crossChecks.push(check)
+        if (!matched) warnings.push(`${field} differs by ${round(relativeDifference * 100, 1)}% between ${check.primaryProvider} and ${supplement.provider}; the primary value was retained.`)
       }
     }
     provenance.push(...(supplement.provenance || []))
@@ -398,30 +577,64 @@ export function finalizeNormalizedInputs(secNormalized, marketSnapshot, suppleme
     inputs.sharePrice = marketSnapshot.averagePrice
     sourceNotes.sharePrice = `${marketSnapshot.tradingDays}-trading-day average from ${marketSnapshot.providers.join(" + ")}; as of ${marketSnapshot.asOf}`
     availableFields.add("sharePrice")
+    providerByField.set("sharePrice", marketSnapshot.providers.join(" + "))
+  }
+  if (marketSnapshot.impliedSharesOutstanding > 0) {
+    const filingShares = Number(inputs.sharesOutstanding) || 0
+    const difference = filingShares > 0
+      ? Math.abs(filingShares - marketSnapshot.impliedSharesOutstanding) / Math.max(Math.abs(marketSnapshot.impliedSharesOutstanding), 1)
+      : 1
+    if (!availableFields.has("sharesOutstanding") || difference > 0.08) {
+      if (availableFields.has("sharesOutstanding")) warnings.push(`Filing shares differ by ${round(difference * 100, 1)}% from shares implied by reported market capitalization; the market-implied share count is used.`)
+      inputs.sharesOutstanding = marketSnapshot.impliedSharesOutstanding
+      sourceNotes.sharesOutstanding = "Reported market capitalization divided by cross-checked current share price"
+      availableFields.add("sharesOutstanding")
+      providerByField.set("sharesOutstanding", "Nasdaq market capitalization + cross-checked price")
+    }
   }
   const marketBase = marketSnapshot.averageMarketCap || marketSnapshot.currentMarketCap
   if (marketBase > 0) {
-    inputs.dividendYield = secNormalized.rawMetrics.dividendsPaid > 0
+    const filingDividendMeasured = Boolean(secNormalized.measuredRawMetrics?.dividendsPaid)
+    const marketDividendMeasured = Boolean(marketSnapshot.annualDividendAvailable)
+    inputs.dividendYield = filingDividendMeasured
       ? round(secNormalized.rawMetrics.dividendsPaid / marketBase)
-      : marketSnapshot.annualDividendPerShare > 0 && marketSnapshot.averagePrice > 0
+      : marketDividendMeasured && marketSnapshot.averagePrice > 0
         ? round(marketSnapshot.annualDividendPerShare / marketSnapshot.averagePrice)
         : 0
     inputs.buybackYield = round(secNormalized.rawMetrics.buybacks / marketBase)
-    sourceNotes.dividendYield = secNormalized.rawMetrics.dividendsPaid > 0
+    if (filingDividendMeasured || marketDividendMeasured) {
+      availableFields.add("dividendYield")
+      providerByField.set("dividendYield", filingDividendMeasured ? secNormalized.provider || "SEC" : marketSnapshot.providers.join(" + "))
+    }
+    if (secNormalized.measuredRawMetrics?.buybacks) {
+      availableFields.add("buybackYield")
+      providerByField.set("buybackYield", secNormalized.provider || "SEC")
+    }
+    sourceNotes.dividendYield = filingDividendMeasured
       ? "Annual cash dividends paid divided by recent average market capitalization"
-      : "Trailing market-feed dividends per share divided by recent average share price"
-    sourceNotes.buybackYield = "Annual common-stock repurchases divided by recent average market capitalization"
+      : marketDividendMeasured
+        ? "Trailing market-feed dividends per share divided by recent average share price"
+        : "Missing - no measured dividend value was returned"
+    sourceNotes.buybackYield = secNormalized.measuredRawMetrics?.buybacks
+      ? "Annual common-stock repurchases divided by recent average market capitalization"
+      : "Missing - no measured repurchase value was returned"
   }
   if (marketSnapshot.warning) warnings.push(marketSnapshot.warning)
 
   const applicable = applicableFinancialFields(inputs)
   const missing = applicable.filter((field) => !availableFields.has(field))
+  const fieldStatus = Object.fromEntries(applicable.map((field) => [
+    field,
+    !availableFields.has(field) ? "missing" : Number(inputs[field]) === 0 ? "measured-zero" : "measured",
+  ]))
   return {
     inputs,
     sourceNotes,
     provenance,
     warnings: [...new Set(warnings)],
     missing,
+    fieldStatus,
+    crossChecks,
     coverage: {
       populated: applicable.length - missing.length,
       total: applicable.length,
@@ -432,7 +645,7 @@ export function finalizeNormalizedInputs(secNormalized, marketSnapshot, suppleme
 
 function applicableFinancialFields(inputs) {
   const financial = inputs.businessModel === "Financial / Balance-Sheet Business"
-  const fields = ["revenue", "revenueGrowth", "cash", "debt", "tangibleBookValue", "assetBackingValue", "roe", "rotce", "eps", "sharePrice", "sharesOutstanding"]
+  const fields = ["revenue", "revenueGrowth", "cash", "debt", "tangibleBookValue", "assetBackingValue", "roe", "rotce", "eps", "sharePrice", "sharesOutstanding", "dividendYield", "buybackYield"]
   if (!financial) fields.push("grossMargin", "marginChangeYoy", "opexRatio", "capexPct")
   if (/Software|Biotech|Life Sciences|Medical Devices|Aerospace/.test(`${inputs.sector} ${inputs.businessModel}`)) fields.push("rdPct")
   if (/Retail|Manufacturing|Product|Hardware|Equipment|Asset-Heavy/.test(`${inputs.sector} ${inputs.businessModel}`)) fields.push("inventory", "ar", "ap")
@@ -472,6 +685,22 @@ export async function fetchYahooMarketSeries(ticker) {
     annualDividendPerShare,
     asOf: result.meta?.regularMarketTime ? new Date(result.meta.regularMarketTime * 1000).toISOString() : "",
   }
+}
+
+export async function fetchNasdaqSupplement(ticker) {
+  const encoded = encodeURIComponent(ticker)
+  const headers = {
+    "User-Agent": "Mozilla/5.0 (compatible; EvalSystem2/1.0)",
+    Accept: "application/json, text/plain, */*",
+    "Accept-Language": "en-US,en;q=0.9",
+  }
+  const [financials, info, summary] = await Promise.all([
+    fetchJson(`https://api.nasdaq.com/api/company/${encoded}/financials?frequency=1`, { headers }),
+    fetchJson(`https://api.nasdaq.com/api/quote/${encoded}/info?assetclass=stocks`, { headers }),
+    fetchJson(`https://api.nasdaq.com/api/quote/${encoded}/summary?assetclass=stocks`, { headers }),
+  ])
+  if (!financials?.data || !info?.data) throw new Error("Nasdaq returned no company financials.")
+  return normalizeNasdaqCompany({ ticker, financials, info, summary })
 }
 
 export async function fetchAlphaVantageSupplement(ticker, apiKey) {
