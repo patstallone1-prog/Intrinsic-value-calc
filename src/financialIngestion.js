@@ -723,6 +723,12 @@ export async function fetchAlphaVantageSupplement(ticker, apiKey) {
     fetchJson(`${base}?function=OVERVIEW&symbol=${encodeURIComponent(ticker)}&apikey=${encodeURIComponent(apiKey)}`),
     fetchJson(`${base}?function=GLOBAL_QUOTE&symbol=${encodeURIComponent(ticker)}&apikey=${encodeURIComponent(apiKey)}`),
   ])
+  // Alpha Vantage answers a rate-limited or invalid call with HTTP 200 and a JSON body
+  // carrying "Information"/"Note"/"Error Message" instead of the requested fields - left
+  // undetected, every field on it reads as a measured zero rather than an unavailable
+  // provider, which silently corrupts coverage once the (often very low) daily quota is hit.
+  const throttleNote = overview.Information || overview.Note || overview["Error Message"]
+  if (throttleNote) throw new Error(throttleNote)
   const shares = number(overview.SharesOutstanding)
   // Alpha Vantage's free OVERVIEW endpoint reports book value per share rather than a
   // total, and does not split out goodwill/intangibles. Used as a failsafe (only fills a
@@ -890,6 +896,7 @@ export async function ingestTicker(ticker, options = {}) {
     providers: [bundle ? "SEC" : null, ...marketSources.map((item) => item.provider), ...supplements.map((item) => item.provider)]
       .filter((item, index, all) => item && all.indexOf(item) === index),
     usedFmp,
+    usedAlphaVantage: Boolean(alpha),
     ...normalized,
   }
 }

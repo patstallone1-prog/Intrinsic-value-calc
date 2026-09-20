@@ -1,11 +1,12 @@
 {
-  "startedAt": "2026-09-20T15:34:52.810Z",
-  "updatedAt": "2026-09-20T16:17:25.430Z",
+  "startedAt": "2026-09-20T21:45:36.075Z",
+  "updatedAt": "2026-09-20T22:31:31.880Z",
   "universeSize": 9895,
   "totalRecorded": 8746,
-  "processedThisRun": 9894,
-  "succeededThisRun": 8745,
+  "processedThisRun": 9895,
+  "succeededThisRun": 8746,
   "failedThisRun": 1149,
   "remaining": 0,
+  "fmpTicketsUsed": 41,
   "running": false
 }

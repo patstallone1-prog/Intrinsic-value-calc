@@ -36,7 +36,12 @@ const SEC_UA = process.env.SEC_USER_AGENT || "eval-system-2 screener larry.albuk
 const CONCURRENCY = Math.max(1, Number(process.env.SCREENER_CONCURRENCY || 3))
 const DISPATCH_DELAY_MS = Math.max(0, Number(process.env.SCREENER_DELAY_MS ?? 250))
 const FMP_MAX_CALLS_PER_RUN = Math.max(0, Number(process.env.FMP_MAX_CALLS_PER_RUN ?? 40))
+// Alpha Vantage's free tier is a hard 25 requests/day and each ticker costs 2 (OVERVIEW +
+// GLOBAL_QUOTE), so at most ~12 tickers/day can ever get real data from it. Budgeting to 10
+// leaves a couple of calls of headroom for any interactive /api/ingest use on the same key.
+const ALPHA_VANTAGE_MAX_CALLS_PER_RUN = Math.max(0, Number(process.env.ALPHA_VANTAGE_MAX_CALLS_PER_RUN ?? 10))
 let fmpTicketsUsed = 0
+let alphaVantageTicketsUsed = 0
 
 function flagValue(name) {
   const index = process.argv.indexOf(name)
@@ -98,12 +103,14 @@ async function loadTickerUniverse() {
 
 async function ingestAndValue(ticker) {
   const fmpBudgetRemaining = fmpTicketsUsed < FMP_MAX_CALLS_PER_RUN
+  const alphaVantageBudgetRemaining = alphaVantageTicketsUsed < ALPHA_VANTAGE_MAX_CALLS_PER_RUN
   const ingestion = await ingestTicker(ticker, {
     secUserAgent: SEC_UA,
-    alphaVantageApiKey: process.env.ALPHA_VANTAGE_API_KEY,
+    alphaVantageApiKey: alphaVantageBudgetRemaining ? process.env.ALPHA_VANTAGE_API_KEY : undefined,
     fmpApiKey: fmpBudgetRemaining ? process.env.FMP_API_KEY : undefined,
   })
   if (ingestion.usedFmp) fmpTicketsUsed += 1
+  if (ingestion.usedAlphaVantage) alphaVantageTicketsUsed += 1
   const inputs = normalizeInputs({ ...DEFAULT_INPUTS, ...ingestion.inputs })
   const result = computeValuation(inputs)
   return { normalized: ingestion, marketSnapshot: ingestion.marketSnapshot, result, providers: ingestion.providers }
@@ -136,6 +143,7 @@ function buildRecord(ticker, title, cik, outcome) {
     coveragePct: round((normalized.coverage?.percent || 0) * 100, 1),
     providers,
     usedFmp: !!normalized.usedFmp,
+    usedAlphaVantage: !!normalized.usedAlphaVantage,
     warningsCount: (result.warnings?.length || 0) + (normalized.warnings?.length || 0),
     errorsCount: result.errors?.length || 0,
     processedAt: new Date().toISOString(),
@@ -180,7 +188,7 @@ async function main() {
         const record = buildRecord(ticker, title, cik, outcome)
         await appendLine(resultsPath, JSON.stringify(record))
         succeeded += 1
-        if (succeeded % 25 === 0) console.log(`  [${succeeded} ok / ${failed} failed / ${processedThisRun} attempted / FMP used on ${fmpTicketsUsed} tickers] latest: ${ticker}`)
+        if (succeeded % 25 === 0) console.log(`  [${succeeded} ok / ${failed} failed / ${processedThisRun} attempted / FMP on ${fmpTicketsUsed}, Alpha Vantage on ${alphaVantageTicketsUsed}] latest: ${ticker}`)
       } catch (error) {
         failed += 1
         await appendLine(errorsPath, `${new Date().toISOString()} ${ticker} ${error.message}`)
@@ -201,6 +209,7 @@ async function main() {
       failedThisRun: failed,
       remaining: Math.max(queue.length - processedThisRun, 0),
       fmpTicketsUsed,
+      alphaVantageTicketsUsed,
       running: true,
     }).catch(() => {})
   }, 5000)
@@ -217,9 +226,10 @@ async function main() {
     failedThisRun: failed,
     remaining: Math.max(queue.length - processedThisRun, 0),
     fmpTicketsUsed,
+    alphaVantageTicketsUsed,
     running: false,
   })
-  console.log(`Screener run complete: ${succeeded} succeeded, ${failed} failed, ${Math.max(queue.length - processedThisRun, 0)} still pending. FMP used on ${fmpTicketsUsed}/${FMP_MAX_CALLS_PER_RUN} budgeted tickers.`)
+  console.log(`Screener run complete: ${succeeded} succeeded, ${failed} failed, ${Math.max(queue.length - processedThisRun, 0)} still pending. FMP used on ${fmpTicketsUsed}/${FMP_MAX_CALLS_PER_RUN} budgeted tickers, Alpha Vantage on ${alphaVantageTicketsUsed}/${ALPHA_VANTAGE_MAX_CALLS_PER_RUN}.`)
 }
 
 main().catch((error) => {
