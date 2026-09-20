@@ -167,4 +167,30 @@ assert.equal(globalFallback.inputs.companyName, "Global Plc")
 assert.equal(globalFallback.inputs.sector, "Manufacturing / Industrials")
 assert.equal(globalFallback.inputs.revenue, 900)
 
+// Per-share failsafe: when SEC XBRL tagging doesn't yield a tangible book value (e.g. a
+// foreign private issuer with no us-gaap facts), a supplement provider's per-share-derived
+// total (book value per share x shares, as Alpha Vantage's OVERVIEW and FMP's key-metrics
+// report) should fill the gap rather than leaving the field missing.
+const perShareFallback = finalizeNormalizedInputs(emptyNormalizedCompany("PERSHARE"), market, [{
+  provider: "Alpha Vantage",
+  inputs: { companyName: "Per Share Co", revenue: 500, sharesOutstanding: 40, tangibleBookValue: 22 * 40, assetBackingValue: 22 * 40 },
+  provenance: [],
+  warnings: [],
+}])
+assert.equal(perShareFallback.inputs.tangibleBookValue, 880, "book-value-per-share x shares should fill tangibleBookValue when the primary filing value is missing")
+assert.equal(perShareFallback.fieldStatus.tangibleBookValue, "measured")
+assert.ok(!perShareFallback.missing.includes("tangibleBookValue"))
+
+// When SEC already measured tangibleBookValue directly, a per-share-derived supplement value
+// must only cross-check it, never silently override the primary filing-based figure.
+const perShareCrossCheck = finalizeNormalizedInputs(sec, market, [{
+  provider: "Financial Modeling Prep",
+  inputs: { tangibleBookValue: 10 * 40 },
+  availableFields: ["tangibleBookValue"],
+  provenance: [],
+  warnings: [],
+}])
+assert.equal(perShareCrossCheck.inputs.tangibleBookValue, 550, "primary SEC-derived tangibleBookValue should be retained over a conflicting per-share-derived supplement value")
+assert.equal(perShareCrossCheck.crossChecks.find((check) => check.field === "tangibleBookValue")?.status, "review")
+
 console.log("financial ingestion tests passed")

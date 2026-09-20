@@ -19,10 +19,38 @@ const port = Number(process.env.PORT || 4174)
 const secUserAgent = process.env.SEC_USER_AGENT || "eval-system-2 financial normalization contact@example.com"
 const aiEnabled = process.env.ENABLE_AI_INGESTION === "1"
 const cache = new Map()
+const screenerResultsPath = path.join(root, "data/screener-results.jsonl")
+const screenerMetaPath = path.join(root, "data/screener-meta.json")
 
 function json(res, status, body) {
   res.writeHead(status, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" })
   res.end(JSON.stringify(body))
+}
+
+async function readScreenerResults() {
+  try {
+    const raw = await fs.readFile(screenerResultsPath, "utf8")
+    const results = []
+    for (const line of raw.split("\n")) {
+      if (!line.trim()) continue
+      try {
+        results.push(JSON.parse(line))
+      } catch {
+        // Skip a partially-written trailing line left by an in-progress run.
+      }
+    }
+    return results
+  } catch {
+    return []
+  }
+}
+
+async function readScreenerMeta() {
+  try {
+    return JSON.parse(await fs.readFile(screenerMetaPath, "utf8"))
+  } catch {
+    return null
+  }
 }
 
 async function ingest(ticker) {
@@ -125,6 +153,10 @@ const server = http.createServer(async (req, res) => {
     return res.end(ROBOTS_TXT)
   }
   if (url.pathname === "/api/config") return json(res, 200, { aiIngestionEnabled: aiEnabled })
+  if (url.pathname === "/api/screener") {
+    const [results, meta] = await Promise.all([readScreenerResults(), readScreenerMeta()])
+    return json(res, 200, { results, meta })
+  }
   if (url.pathname === "/api/ingest") {
     const ticker = String(url.searchParams.get("ticker") || "").trim().toUpperCase()
     if (!/^[A-Z0-9.-]{1,12}$/.test(ticker)) return json(res, 400, { error: "Enter a valid public-company ticker." })

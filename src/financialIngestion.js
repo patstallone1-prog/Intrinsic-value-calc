@@ -723,6 +723,12 @@ export async function fetchAlphaVantageSupplement(ticker, apiKey) {
     fetchJson(`${base}?function=OVERVIEW&symbol=${encodeURIComponent(ticker)}&apikey=${encodeURIComponent(apiKey)}`),
     fetchJson(`${base}?function=GLOBAL_QUOTE&symbol=${encodeURIComponent(ticker)}&apikey=${encodeURIComponent(apiKey)}`),
   ])
+  const shares = number(overview.SharesOutstanding)
+  // Alpha Vantage's free OVERVIEW endpoint reports book value per share rather than a
+  // total, and does not split out goodwill/intangibles. Used as a failsafe (only fills a
+  // gap when the SEC filing itself is unavailable) so a per-share-only source is still
+  // better than a fully missing field.
+  const bookValuePerShareTotal = shares > 0 ? number(overview.BookValue) * shares : 0
   const inputs = {
     companyName: overview.Name || ticker,
     ...classifyCompany(`${overview.Sector || ""} ${overview.Industry || ""}`),
@@ -730,8 +736,10 @@ export async function fetchAlphaVantageSupplement(ticker, apiKey) {
     capitalStatus: "Public",
     revenue: number(overview.RevenueTTM),
     grossMargin: number(overview.GrossProfitTTM) / Math.max(number(overview.RevenueTTM), 1),
-    sharesOutstanding: number(overview.SharesOutstanding),
+    sharesOutstanding: shares,
     eps: number(overview.EPS),
+    tangibleBookValue: bookValuePerShareTotal,
+    assetBackingValue: bookValuePerShareTotal,
   }
   return {
     provider: "Alpha Vantage",
@@ -750,22 +758,35 @@ export async function fetchAlphaVantageSupplement(ticker, apiKey) {
 export async function fetchFmpSupplement(ticker, apiKey) {
   if (!apiKey) return null
   const base = "https://financialmodelingprep.com/api/v3"
-  const [profileRows, incomeRows, balanceRows, cashRows] = await Promise.all([
+  const [profileRows, incomeRows, balanceRows, cashRows, keyMetricsRows] = await Promise.all([
     fetchJson(`${base}/profile/${encodeURIComponent(ticker)}?apikey=${encodeURIComponent(apiKey)}`),
     fetchJson(`${base}/income-statement/${encodeURIComponent(ticker)}?limit=2&apikey=${encodeURIComponent(apiKey)}`),
     fetchJson(`${base}/balance-sheet-statement/${encodeURIComponent(ticker)}?limit=1&apikey=${encodeURIComponent(apiKey)}`),
     fetchJson(`${base}/cash-flow-statement/${encodeURIComponent(ticker)}?limit=1&apikey=${encodeURIComponent(apiKey)}`),
+    fetchJson(`${base}/key-metrics/${encodeURIComponent(ticker)}?limit=1&apikey=${encodeURIComponent(apiKey)}`).catch(() => null),
   ])
   const profile = profileRows?.[0] || {}
   const income = incomeRows?.[0] || {}
   const priorIncome = incomeRows?.[1] || {}
   const balance = balanceRows?.[0] || {}
   const cashFlow = cashRows?.[0] || {}
+  const keyMetrics = keyMetricsRows?.[0] || {}
   const revenue = number(income.revenue)
   const priorRevenue = number(priorIncome.revenue)
   const debt = number(balance.shortTermDebt) + number(balance.longTermDebt)
   const freeCashFlow = number(cashFlow.freeCashFlow) || number(cashFlow.operatingCashFlow) - Math.abs(number(cashFlow.capitalExpenditure))
   const revenueGrowth = priorRevenue > 0 ? (revenue - priorRevenue) / priorRevenue : 0
+  const shares = number(profile.mktCap) > 0 && number(profile.price) > 0 ? number(profile.mktCap) / number(profile.price) : 0
+  const equity = number(balance.totalStockholdersEquity)
+  const goodwillAndIntangibles = number(balance.goodwill) + number(balance.intangibleAssets)
+  // Prefer the direct balance-sheet calc (equity net of goodwill/intangibles); when the
+  // balance-sheet statement itself is missing or incomplete for a ticker, fall back to the
+  // per-share figures FMP's key-metrics endpoint reports, multiplied back out by share count.
+  const directTangibleBookValue = equity > 0 ? Math.max(equity - goodwillAndIntangibles, 0) : 0
+  const perShareTangibleBookValue = shares > 0 ? number(keyMetrics.tangibleBookValuePerShare) * shares : 0
+  const perShareBookValue = shares > 0 ? number(keyMetrics.bookValuePerShare) * shares : 0
+  const tangibleBookValue = directTangibleBookValue > 0 ? directTangibleBookValue : perShareTangibleBookValue > 0 ? perShareTangibleBookValue : perShareBookValue
+  const assetBackingValue = equity > 0 ? equity : perShareBookValue
   const inputs = {
     companyName: profile.companyName || ticker,
     ...classifyCompany(`${profile.sector || ""} ${profile.industry || ""}`),
@@ -777,11 +798,13 @@ export async function fetchFmpSupplement(ticker, apiKey) {
     opexRatio: revenue > 0 ? (number(income.grossProfit) - number(income.ebitda)) / revenue : 0,
     cash: number(balance.cashAndShortTermInvestments),
     debt,
+    tangibleBookValue,
+    assetBackingValue,
     capexPct: revenue > 0 ? Math.abs(number(cashFlow.capitalExpenditure)) / revenue : 0,
     inventory: number(balance.inventory),
     ar: number(balance.netReceivables),
     ap: number(balance.accountPayables),
-    sharesOutstanding: number(profile.mktCap) > 0 && number(profile.price) > 0 ? number(profile.mktCap) / number(profile.price) : 0,
+    sharesOutstanding: shares,
     eps: number(income.epsdiluted || income.eps),
   }
   return {

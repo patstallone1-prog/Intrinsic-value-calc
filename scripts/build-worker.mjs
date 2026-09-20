@@ -10,6 +10,36 @@ const ingestionModule = source.replace(/\nexport\s*\{[\s\S]*?\}\s*$/m, "\n")
 const page = await readFile(join(root, "index.html"), "utf8")
 const projectId = JSON.parse(await readFile(join(root, ".openai/hosting.json"), "utf8")).project_id
 
+// The deployed worker is stateless (no filesystem/DB), so the screener's ongoing background
+// run can't execute there. Instead, bake in the latest local snapshot at build time - each
+// redeploy after a screener run ships an updated snapshot for the hosted /api/screener route.
+async function readScreenerSnapshot() {
+  try {
+    const raw = await readFile(join(root, "data/screener-results.jsonl"), "utf8")
+    const results = []
+    for (const line of raw.split("\n")) {
+      if (!line.trim()) continue
+      try {
+        results.push(JSON.parse(line))
+      } catch {
+        // Skip a partially-written trailing line.
+      }
+    }
+    return results
+  } catch {
+    return []
+  }
+}
+async function readScreenerMetaSnapshot() {
+  try {
+    return JSON.parse(await readFile(join(root, "data/screener-meta.json"), "utf8"))
+  } catch {
+    return null
+  }
+}
+const screenerResults = await readScreenerSnapshot()
+const screenerMeta = await readScreenerMetaSnapshot()
+
 const robotsTxt = `User-agent: *
 Allow: /
 
@@ -42,6 +72,8 @@ const worker = `${ingestionModule}
 
 const page = ${JSON.stringify(page)}
 const robotsTxt = ${JSON.stringify(robotsTxt)}
+const screenerResults = ${JSON.stringify(screenerResults)}
+const screenerMeta = ${JSON.stringify(screenerMeta)}
 const cache = new Map()
 const AI_ENABLED = false
 
@@ -111,6 +143,7 @@ export default {
     const url = new URL(request.url)
     if (url.pathname === "/robots.txt") return new Response(robotsTxt, { headers: { "content-type": "text/plain; charset=utf-8" } })
     if (url.pathname === "/api/config") return json({ aiIngestionEnabled: AI_ENABLED })
+    if (url.pathname === "/api/screener") return json({ results: screenerResults, meta: screenerMeta })
     if (url.pathname === "/api/ingest") {
       const ticker = String(url.searchParams.get("ticker") || "").trim().toUpperCase()
       if (!/^[A-Z0-9.-]{1,12}$/.test(ticker)) return json({ error: "Enter a valid public-company ticker." }, 400)

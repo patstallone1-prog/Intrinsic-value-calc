@@ -53,6 +53,12 @@ const state = {
   extractionStatus: "",
   sourceNotes: savedIngestionMeta.sourceNotes || {},
   humanReview: [],
+  screenerResults: null,
+  screenerMeta: null,
+  screenerLoading: false,
+  screenerError: "",
+  screenerSearch: "",
+  screenerSort: { field: "impliedVsMarketPct", dir: "desc" },
 }
 
 const fields = [
@@ -868,6 +874,110 @@ function renderAudit(result) {
   `
 }
 
+const SCREENER_COLUMNS = [
+  { key: "ticker", label: "Ticker" },
+  { key: "companyName", label: "Company" },
+  { key: "sector", label: "Sector" },
+  { key: "currentPrice", label: "Price" },
+  { key: "observedMarketCap", label: "Market Cap" },
+  { key: "fairCommonEquity", label: "Fair Value" },
+  { key: "impliedVsMarketPct", label: "Implied vs Market" },
+  { key: "confidence", label: "Confidence" },
+  { key: "coveragePct", label: "Coverage" },
+  { key: "processedAt", label: "Updated" },
+]
+
+async function loadScreener() {
+  if (state.screenerLoading) return
+  state.screenerLoading = true
+  state.screenerError = ""
+  render()
+  try {
+    const response = await fetch("/api/screener")
+    const payload = await response.json()
+    if (!response.ok) throw new Error(payload.error || `Screener request failed (${response.status})`)
+    state.screenerResults = payload.results || []
+    state.screenerMeta = payload.meta || null
+  } catch (error) {
+    state.screenerError = error.message
+  } finally {
+    state.screenerLoading = false
+    render()
+  }
+}
+
+function renderScreener() {
+  if (state.screenerResults === null) {
+    if (!state.screenerLoading) loadScreener()
+    return `
+      <div class="results-layout">
+        <section class="panel">
+          <div class="section-title"><h2>Company Screener</h2></div>
+          <p class="muted">${state.screenerLoading ? "Loading screener results..." : state.screenerError || "No screener data yet."}</p>
+        </section>
+      </div>
+    `
+  }
+  const search = state.screenerSearch.trim().toLowerCase()
+  const filtered = state.screenerResults.filter((row) => !search
+    || row.ticker?.toLowerCase().includes(search)
+    || row.companyName?.toLowerCase().includes(search)
+    || row.sector?.toLowerCase().includes(search))
+  const { field, dir } = state.screenerSort
+  const sorted = [...filtered].sort((a, b) => {
+    const av = a[field]
+    const bv = b[field]
+    if (av === null || av === undefined) return 1
+    if (bv === null || bv === undefined) return -1
+    if (typeof av === "string") return dir === "asc" ? av.localeCompare(bv) : bv.localeCompare(av)
+    return dir === "asc" ? av - bv : bv - av
+  })
+  const meta = state.screenerMeta
+  return `
+    <div class="results-layout">
+      <section class="panel">
+        <div class="section-title">
+          <h2>Company Screener</h2>
+          <button class="ghost" data-action="refresh-screener">${state.screenerLoading ? "Refreshing..." : "Refresh"}</button>
+        </div>
+        ${meta ? `
+          <p class="muted">
+            ${meta.totalRecorded || 0} of ${meta.universeSize || 0} public companies recorded${meta.running ? " - background run in progress" : ""} - last updated ${meta.updatedAt ? new Date(meta.updatedAt).toLocaleString() : "n/a"}.
+          </p>
+        ` : state.screenerResults.length === 0 ? `<p class="muted">No screener results recorded yet. Run "node scripts/run-screener.mjs" to start populating this table.</p>` : ""}
+        <input data-screener-search type="text" placeholder="Search ticker, company, or sector" value="${escapeHtml(state.screenerSearch)}" />
+        <table>
+          <thead>
+            <tr>
+              ${SCREENER_COLUMNS.map((column) => `
+                <th data-screener-sort="${column.key}" class="${field === column.key ? "active" : ""}">${escapeHtml(column.label)}${field === column.key ? (dir === "asc" ? " ^" : " v") : ""}</th>
+              `).join("")}
+            </tr>
+          </thead>
+          <tbody>
+            ${sorted.slice(0, 500).map((row) => `
+              <tr>
+                <td>${escapeHtml(row.ticker || "")}</td>
+                <td>${escapeHtml(row.companyName || "")}</td>
+                <td>${escapeHtml(row.sector || "")}</td>
+                <td>${money(row.currentPrice || 0)}</td>
+                <td>${money(row.observedMarketCap || 0)}</td>
+                <td>${money(row.fairCommonEquity || 0)}</td>
+                <td>${row.impliedVsMarketPct === null || row.impliedVsMarketPct === undefined ? "n/a" : `${row.impliedVsMarketPct.toFixed(1)}%`}</td>
+                <td>${pct(row.confidence || 0, 0)}</td>
+                <td>${row.coveragePct === null || row.coveragePct === undefined ? "n/a" : `${row.coveragePct.toFixed(0)}%`}</td>
+                <td>${row.processedAt ? new Date(row.processedAt).toLocaleDateString() : ""}</td>
+              </tr>
+            `).join("")}
+          </tbody>
+        </table>
+        ${sorted.length > 500 ? `<p class="muted">Showing 500 of ${sorted.length} matching companies - narrow your search to see more.</p>` : ""}
+        ${sorted.length === 0 && state.screenerResults.length > 0 ? `<p class="muted">No companies match "${escapeHtml(state.screenerSearch)}".</p>` : ""}
+      </section>
+    </div>
+  `
+}
+
 function render() {
   const result = computeValuation(state.inputs)
   const app = document.querySelector("#app")
@@ -881,6 +991,7 @@ function render() {
         <button data-tab="inputs" class="${state.activeTab === "inputs" ? "active" : ""}">Inputs</button>
         <button data-tab="results" class="${state.activeTab === "results" ? "active" : ""}">Results</button>
         <button data-tab="audit" class="${state.activeTab === "audit" ? "active" : ""}">Audit</button>
+        <button data-tab="screener" class="${state.activeTab === "screener" ? "active" : ""}">Screener</button>
       </nav>
       <button class="ghost ghost--sidebar" data-action="reset-draft">Reset Draft</button>
       <div class="fixture-list">
@@ -899,7 +1010,7 @@ function render() {
           <button class="primary" data-tab="results">Run Valuation</button>
         </div>
       </header>
-      ${state.activeTab === "inputs" ? renderAutoIntake() : state.activeTab === "audit" ? renderAudit(result) : renderResults(result)}
+      ${state.activeTab === "inputs" ? renderAutoIntake() : state.activeTab === "audit" ? renderAudit(result) : state.activeTab === "screener" ? renderScreener() : renderResults(result)}
     </main>
   `
 
@@ -915,6 +1026,16 @@ document.addEventListener("input", (event) => {
   if (event.target.dataset.ticker !== undefined) {
     state.ticker = event.target.value.toUpperCase().replace(/[^A-Z0-9.-]/g, "")
     event.target.value = state.ticker
+    return
+  }
+  if (event.target.dataset.screenerSearch !== undefined) {
+    state.screenerSearch = event.target.value
+    render()
+    const input = document.querySelector("[data-screener-search]")
+    if (input) {
+      input.focus()
+      input.setSelectionRange(input.value.length, input.value.length)
+    }
     return
   }
   if (event.target.dataset.extractionJson !== undefined) {
@@ -1004,16 +1125,27 @@ async function ingestCompany() {
 }
 
 document.addEventListener("click", async (event) => {
-  const target = event.target.closest("[data-tab], [data-fixture], [data-step], [data-action], [data-mode]")
+  const target = event.target.closest("[data-tab], [data-fixture], [data-step], [data-action], [data-mode], [data-screener-sort]")
   if (!target) return
   const tab = target.dataset.tab
   const fixture = target.dataset.fixture
   const step = target.dataset.step
   const action = target.dataset.action
   const mode = target.dataset.mode
+  const screenerSortField = target.dataset.screenerSort
   if (tab) {
     state.activeTab = tab
     render()
+  }
+  if (screenerSortField) {
+    state.screenerSort = {
+      field: screenerSortField,
+      dir: state.screenerSort.field === screenerSortField && state.screenerSort.dir === "desc" ? "asc" : "desc",
+    }
+    render()
+  }
+  if (action === "refresh-screener") {
+    loadScreener()
   }
   if (step !== undefined) {
     state.step = Number(step)
