@@ -1,0 +1,105 @@
+{
+  "generatedAt": "2026-09-20T21:22:52.497Z",
+  "universeSize": 9895,
+  "succeeded": 8746,
+  "failed": 1149,
+  "failureCategoryCounts": {
+    "Foreign ADR / OTC Ordinary": 962,
+    "Foreign Mining / Resources": 7,
+    "Other / Unresolved": 108,
+    "Closed-End Fund / Trust": 61,
+    "Community Bank Holding Co.": 10,
+    "SPAC": 1
+  },
+  "missingFieldSample": {
+    "sampleSize": 400,
+    "note": "Sample skewed toward the lowest-coverage third of successfully-ingested companies, so rates run higher than the full-population average; ranking and relative gaps are the useful signal.",
+    "topMissingFields": [
+      {
+        "field": "buybackYield",
+        "count": 373,
+        "pct": 93
+      },
+      {
+        "field": "dividendYield",
+        "count": 369,
+        "pct": 92
+      },
+      {
+        "field": "eps",
+        "count": 332,
+        "pct": 83
+      },
+      {
+        "field": "rotce",
+        "count": 327,
+        "pct": 82
+      },
+      {
+        "field": "debt",
+        "count": 324,
+        "pct": 81
+      },
+      {
+        "field": "revenueGrowth",
+        "count": 311,
+        "pct": 78
+      },
+      {
+        "field": "revenue",
+        "count": 310,
+        "pct": 78
+      },
+      {
+        "field": "marginChangeYoy",
+        "count": 306,
+        "pct": 77
+      },
+      {
+        "field": "capexPct",
+        "count": 305,
+        "pct": 76
+      },
+      {
+        "field": "grossMargin",
+        "count": 304,
+        "pct": 76
+      },
+      {
+        "field": "tangibleBookValue",
+        "count": 299,
+        "pct": 75
+      },
+      {
+        "field": "opexRatio",
+        "count": 299,
+        "pct": 75
+      },
+      {
+        "field": "roe",
+        "count": 294,
+        "pct": 74
+      },
+      {
+        "field": "cash",
+        "count": 288,
+        "pct": 72
+      },
+      {
+        "field": "assetBackingValue",
+        "count": 286,
+        "pct": 72
+      },
+      {
+        "field": "sharesOutstanding",
+        "count": 286,
+        "pct": 72
+      }
+    ]
+  },
+  "rootCause": {
+    "alphaVantageConfigured": false,
+    "fmpConfigured": false,
+    "note": "ALPHA_VANTAGE_API_KEY and FMP_API_KEY are unset in this environment, so two of the five ingestion providers never run; only SEC EDGAR, Yahoo Finance, and Nasdaq are active. This is the largest single driver of missing fields on companies that lack clean SEC XBRL tagging."
+  }
+}
