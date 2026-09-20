@@ -1,3 +1,5 @@
 node_modules/
 graphify-out/
 data/screener-run.log
+.env
+.env.*

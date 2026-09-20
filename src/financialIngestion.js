@@ -816,4 +816,82 @@ export async function fetchFmpSupplement(ticker, apiKey) {
   }
 }
 
+// Orchestrates a full ticker ingestion shared by the dev server, the deployed worker, and
+// the background screener. Financial Modeling Prep has a hard daily call cap on the plan
+// this project uses (each fetchFmpSupplement call alone costs 5 FMP requests), so it is
+// deliberately excluded from the first, parallel round of provider calls and only invoked
+// afterward, and only when SEC + Yahoo + Nasdaq + Alpha Vantage still leave fields missing -
+// a last-resort backfill, never a verifier spent cross-checking data that already resolved.
+export async function ingestTicker(ticker, options = {}) {
+  const cacheKey = ticker.toUpperCase()
+  const secUserAgent = options.secUserAgent || "eval-system-2 financial normalization contact@example.com"
+  const alphaVantageApiKey = options.alphaVantageApiKey
+  const fmpApiKey = options.fmpApiKey
+  const providerWarnings = []
+
+  const [bundle, yahoo, nasdaq, alpha] = await Promise.all([
+    fetchSecBundle(cacheKey, secUserAgent).catch((error) => {
+      providerWarnings.push(`SEC unavailable: ${error.message}`)
+      return null
+    }),
+    fetchYahooMarketSeries(cacheKey).catch((error) => {
+      providerWarnings.push(`Yahoo Finance unavailable: ${error.message}`)
+      return null
+    }),
+    fetchNasdaqSupplement(cacheKey).catch((error) => {
+      providerWarnings.push(`Nasdaq unavailable: ${error.message}`)
+      return null
+    }),
+    fetchAlphaVantageSupplement(cacheKey, alphaVantageApiKey).catch((error) => {
+      providerWarnings.push(`Alpha Vantage unavailable: ${error.message}`)
+      return null
+    }),
+  ])
+
+  const sec = bundle ? normalizeSecCompany(bundle) : emptyNormalizedCompany(cacheKey)
+  let supplements = [nasdaq, alpha].filter(Boolean)
+  let marketSources = [yahoo, nasdaq?.marketSeries, alpha?.marketSeries].filter(Boolean)
+  let shares = sec.inputs.sharesOutstanding || supplements.find((item) => item.inputs?.sharesOutstanding)?.inputs.sharesOutstanding || 0
+  let marketSnapshot = normalizeMarketSeries(marketSources, shares)
+  let normalized = finalizeNormalizedInputs(sec, marketSnapshot, supplements)
+
+  let fmp = null
+  let usedFmp = false
+  const noStatementData = !bundle && !supplements.some((item) => item.inputs?.revenue > 0)
+  // A single stray gap (dividendYield/buybackYield are absent, not zero, for most companies
+  // that don't pay one) shouldn't spend an FMP call - reserve the budget for companies that
+  // are genuinely thin on data, plus the true last-resort case where nothing resolved at all.
+  const missingThreshold = options.fmpMissingThreshold ?? 3
+  if (fmpApiKey && (normalized.missing.length >= missingThreshold || noStatementData)) {
+    usedFmp = true
+    fmp = await fetchFmpSupplement(cacheKey, fmpApiKey).catch((error) => {
+      providerWarnings.push(`Financial Modeling Prep unavailable: ${error.message}`)
+      return null
+    })
+    if (fmp) {
+      supplements = [...supplements, fmp]
+      marketSources = [...marketSources, fmp.marketSeries].filter(Boolean)
+      shares = sec.inputs.sharesOutstanding || supplements.find((item) => item.inputs?.sharesOutstanding)?.inputs.sharesOutstanding || 0
+      marketSnapshot = normalizeMarketSeries(marketSources, shares)
+      normalized = finalizeNormalizedInputs(sec, marketSnapshot, supplements)
+    }
+  }
+
+  if (!bundle && !supplements.some((item) => item.inputs?.revenue > 0)) {
+    throw new Error(`No financial-statement provider returned data for ${cacheKey}. Configure ALPHA_VANTAGE_API_KEY or FMP_API_KEY for non-SEC issuers.`)
+  }
+  normalized.warnings.push(...providerWarnings)
+
+  return {
+    ticker: cacheKey,
+    company: bundle?.company || { ticker: cacheKey, title: normalized.inputs.companyName },
+    periodEnd: sec.periodEnd,
+    marketSnapshot,
+    providers: [bundle ? "SEC" : null, ...marketSources.map((item) => item.provider), ...supplements.map((item) => item.provider)]
+      .filter((item, index, all) => item && all.indexOf(item) === index),
+    usedFmp,
+    ...normalized,
+  }
+}
+
 export { ENGINE_FINANCIAL_FIELDS }

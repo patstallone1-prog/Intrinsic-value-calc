@@ -2,17 +2,7 @@ import fs from "node:fs/promises"
 import http from "node:http"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
-import {
-  fetchAlphaVantageSupplement,
-  emptyNormalizedCompany,
-  fetchFmpSupplement,
-  fetchNasdaqSupplement,
-  fetchSecBundle,
-  fetchYahooMarketSeries,
-  finalizeNormalizedInputs,
-  normalizeMarketSeries,
-  normalizeSecCompany,
-} from "../src/financialIngestion.js"
+import { ingestTicker } from "../src/financialIngestion.js"
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)))
 const port = Number(process.env.PORT || 4174)
@@ -58,50 +48,12 @@ async function ingest(ticker) {
   const cached = cache.get(cacheKey)
   if (cached && Date.now() - cached.time < 15 * 60_000) return cached.value
 
-  const providerWarnings = []
-  const optionalTasks = [
-    fetchSecBundle(cacheKey, secUserAgent).catch((error) => {
-      providerWarnings.push(`SEC unavailable: ${error.message}`)
-      return null
-    }),
-    fetchYahooMarketSeries(cacheKey).catch((error) => {
-      providerWarnings.push(`Yahoo Finance unavailable: ${error.message}`)
-      return null
-    }),
-    fetchNasdaqSupplement(cacheKey).catch((error) => {
-      providerWarnings.push(`Nasdaq unavailable: ${error.message}`)
-      return null
-    }),
-    fetchAlphaVantageSupplement(cacheKey, process.env.ALPHA_VANTAGE_API_KEY).catch((error) => {
-      providerWarnings.push(`Alpha Vantage unavailable: ${error.message}`)
-      return null
-    }),
-    fetchFmpSupplement(cacheKey, process.env.FMP_API_KEY).catch((error) => {
-      providerWarnings.push(`Financial Modeling Prep unavailable: ${error.message}`)
-      return null
-    }),
-  ]
-  const [bundle, yahoo, nasdaq, alpha, fmp] = await Promise.all(optionalTasks)
-  const sec = bundle ? normalizeSecCompany(bundle) : emptyNormalizedCompany(cacheKey)
-  const supplements = [nasdaq, alpha, fmp].filter(Boolean)
-  if (!bundle && !supplements.some((item) => item.inputs?.revenue > 0)) {
-    throw new Error(`No financial-statement provider returned data for ${cacheKey}. Configure ALPHA_VANTAGE_API_KEY or FMP_API_KEY for non-SEC issuers.`)
-  }
-  const marketSources = [yahoo, nasdaq?.marketSeries, alpha?.marketSeries, fmp?.marketSeries].filter(Boolean)
-  const shares = sec.inputs.sharesOutstanding || supplements.find((item) => item.inputs?.sharesOutstanding)?.inputs.sharesOutstanding || 0
-  const marketSnapshot = normalizeMarketSeries(marketSources, shares)
-  const normalized = finalizeNormalizedInputs(sec, marketSnapshot, supplements)
-  normalized.warnings.push(...providerWarnings)
-
-  const value = {
-    ticker: cacheKey,
-    company: bundle?.company || { ticker: cacheKey, title: normalized.inputs.companyName },
-    periodEnd: sec.periodEnd,
-    marketSnapshot,
-    providers: [bundle ? "SEC" : null, ...marketSources.map((item) => item.provider), ...supplements.map((item) => item.provider)].filter((item, index, all) => item && all.indexOf(item) === index),
-    ...normalized,
-    ai: { enabled: aiEnabled, used: false },
-  }
+  const value = await ingestTicker(cacheKey, {
+    secUserAgent,
+    alphaVantageApiKey: process.env.ALPHA_VANTAGE_API_KEY,
+    fmpApiKey: process.env.FMP_API_KEY,
+  })
+  value.ai = { enabled: aiEnabled, used: false }
   cache.set(cacheKey, { time: Date.now(), value })
   return value
 }

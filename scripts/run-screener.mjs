@@ -14,20 +14,16 @@
 //
 // Optional env: ALPHA_VANTAGE_API_KEY, FMP_API_KEY (used as supplement providers, same as
 // the live server), SEC_USER_AGENT (a real contact email, required by SEC's fair-use policy).
+//
+// FMP is on a plan with a hard daily call cap and each ticker's FMP supplement costs 5 calls
+// (profile, income, balance, cash flow, key metrics), so this run enforces its own budget via
+// FMP_MAX_CALLS_PER_RUN (default 40 tickers worth, ~200 calls, leaving headroom under 250) and
+// stops handing the FMP key to new tickers once it's spent - later tickers just proceed without
+// it, the same as if the key were never configured.
 import fs from "node:fs/promises"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
-import {
-  emptyNormalizedCompany,
-  fetchAlphaVantageSupplement,
-  fetchFmpSupplement,
-  fetchNasdaqSupplement,
-  fetchSecBundle,
-  fetchYahooMarketSeries,
-  finalizeNormalizedInputs,
-  normalizeMarketSeries,
-  normalizeSecCompany,
-} from "../src/financialIngestion.js"
+import { ingestTicker } from "../src/financialIngestion.js"
 import { DEFAULT_INPUTS, computeValuation, normalizeInputs } from "../src/valuationEngine.js"
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)))
@@ -39,6 +35,8 @@ const errorsPath = path.join(dataDir, "screener-errors.log")
 const SEC_UA = process.env.SEC_USER_AGENT || "eval-system-2 screener larry.albukerk@gmail.com"
 const CONCURRENCY = Math.max(1, Number(process.env.SCREENER_CONCURRENCY || 3))
 const DISPATCH_DELAY_MS = Math.max(0, Number(process.env.SCREENER_DELAY_MS ?? 250))
+const FMP_MAX_CALLS_PER_RUN = Math.max(0, Number(process.env.FMP_MAX_CALLS_PER_RUN ?? 40))
+let fmpTicketsUsed = 0
 
 function flagValue(name) {
   const index = process.argv.indexOf(name)
@@ -99,47 +97,20 @@ async function loadTickerUniverse() {
 }
 
 async function ingestAndValue(ticker) {
-  const providerWarnings = []
-  const [bundle, yahoo, nasdaq, alpha, fmp] = await Promise.all([
-    fetchSecBundle(ticker, SEC_UA).catch((error) => {
-      providerWarnings.push(`SEC unavailable: ${error.message}`)
-      return null
-    }),
-    fetchYahooMarketSeries(ticker).catch((error) => {
-      providerWarnings.push(`Yahoo Finance unavailable: ${error.message}`)
-      return null
-    }),
-    fetchNasdaqSupplement(ticker).catch((error) => {
-      providerWarnings.push(`Nasdaq unavailable: ${error.message}`)
-      return null
-    }),
-    fetchAlphaVantageSupplement(ticker, process.env.ALPHA_VANTAGE_API_KEY).catch((error) => {
-      providerWarnings.push(`Alpha Vantage unavailable: ${error.message}`)
-      return null
-    }),
-    fetchFmpSupplement(ticker, process.env.FMP_API_KEY).catch((error) => {
-      providerWarnings.push(`Financial Modeling Prep unavailable: ${error.message}`)
-      return null
-    }),
-  ])
-  const sec = bundle ? normalizeSecCompany(bundle) : emptyNormalizedCompany(ticker)
-  const supplements = [nasdaq, alpha, fmp].filter(Boolean)
-  if (!bundle && !supplements.some((item) => item.inputs?.revenue > 0)) {
-    throw new Error(`No financial-statement provider returned data for ${ticker}.`)
-  }
-  const marketSources = [yahoo, nasdaq?.marketSeries, alpha?.marketSeries, fmp?.marketSeries].filter(Boolean)
-  const shares = sec.inputs.sharesOutstanding || supplements.find((item) => item.inputs?.sharesOutstanding)?.inputs.sharesOutstanding || 0
-  const marketSnapshot = normalizeMarketSeries(marketSources, shares)
-  const normalized = finalizeNormalizedInputs(sec, marketSnapshot, supplements)
-  const inputs = normalizeInputs({ ...DEFAULT_INPUTS, ...normalized.inputs })
+  const fmpBudgetRemaining = fmpTicketsUsed < FMP_MAX_CALLS_PER_RUN
+  const ingestion = await ingestTicker(ticker, {
+    secUserAgent: SEC_UA,
+    alphaVantageApiKey: process.env.ALPHA_VANTAGE_API_KEY,
+    fmpApiKey: fmpBudgetRemaining ? process.env.FMP_API_KEY : undefined,
+  })
+  if (ingestion.usedFmp) fmpTicketsUsed += 1
+  const inputs = normalizeInputs({ ...DEFAULT_INPUTS, ...ingestion.inputs })
   const result = computeValuation(inputs)
-  const providers = [bundle ? "SEC" : null, ...marketSources.map((item) => item.provider), ...supplements.map((item) => item.provider)]
-    .filter((item, index, all) => item && all.indexOf(item) === index)
-  return { normalized, marketSnapshot, result, providerWarnings, providers }
+  return { normalized: ingestion, marketSnapshot: ingestion.marketSnapshot, result, providers: ingestion.providers }
 }
 
 function buildRecord(ticker, title, cik, outcome) {
-  const { normalized, marketSnapshot, result, providerWarnings, providers } = outcome
+  const { normalized, marketSnapshot, result, providers } = outcome
   const observedMarketCap = result.marketComparison?.observedMarketCap || marketSnapshot.currentMarketCap || 0
   const fairCommonEquity = result.outputs.fairCommonEquity
   const premiumDiscount = result.marketComparison
@@ -164,7 +135,8 @@ function buildRecord(ticker, title, cik, outcome) {
     confidence: round(result.bands.quality, 3),
     coveragePct: round((normalized.coverage?.percent || 0) * 100, 1),
     providers,
-    warningsCount: (result.warnings?.length || 0) + providerWarnings.length,
+    usedFmp: !!normalized.usedFmp,
+    warningsCount: (result.warnings?.length || 0) + (normalized.warnings?.length || 0),
     errorsCount: result.errors?.length || 0,
     processedAt: new Date().toISOString(),
   }
@@ -180,6 +152,13 @@ async function writeMeta(meta) {
 
 async function main() {
   await fs.mkdir(dataDir, { recursive: true })
+  if (REFRESH) {
+    // Results are append-only during a run (safe for concurrent workers and crash recovery),
+    // so a --refresh has to start from an empty file itself - otherwise every reprocessed
+    // ticker would be appended alongside its stale prior entry instead of replacing it.
+    await fs.writeFile(resultsPath, "", "utf8").catch(() => {})
+    await fs.writeFile(errorsPath, "", "utf8").catch(() => {})
+  }
   const [universe, alreadyProcessed] = await Promise.all([loadTickerUniverse(), loadProcessedTickers()])
   const queue = universe.filter((row) => !alreadyProcessed.has(row.ticker))
   console.log(`Screener universe: ${universe.length} tickers, ${alreadyProcessed.size} already recorded, ${queue.length} pending (limit ${LIMIT === Infinity ? "none" : LIMIT}).`)
@@ -201,7 +180,7 @@ async function main() {
         const record = buildRecord(ticker, title, cik, outcome)
         await appendLine(resultsPath, JSON.stringify(record))
         succeeded += 1
-        if (succeeded % 25 === 0) console.log(`  [${succeeded} ok / ${failed} failed / ${processedThisRun} attempted] latest: ${ticker}`)
+        if (succeeded % 25 === 0) console.log(`  [${succeeded} ok / ${failed} failed / ${processedThisRun} attempted / FMP used on ${fmpTicketsUsed} tickers] latest: ${ticker}`)
       } catch (error) {
         failed += 1
         await appendLine(errorsPath, `${new Date().toISOString()} ${ticker} ${error.message}`)
@@ -221,6 +200,7 @@ async function main() {
       succeededThisRun: succeeded,
       failedThisRun: failed,
       remaining: Math.max(queue.length - processedThisRun, 0),
+      fmpTicketsUsed,
       running: true,
     }).catch(() => {})
   }, 5000)
@@ -236,9 +216,10 @@ async function main() {
     succeededThisRun: succeeded,
     failedThisRun: failed,
     remaining: Math.max(queue.length - processedThisRun, 0),
+    fmpTicketsUsed,
     running: false,
   })
-  console.log(`Screener run complete: ${succeeded} succeeded, ${failed} failed, ${Math.max(queue.length - processedThisRun, 0)} still pending.`)
+  console.log(`Screener run complete: ${succeeded} succeeded, ${failed} failed, ${Math.max(queue.length - processedThisRun, 0)} still pending. FMP used on ${fmpTicketsUsed}/${FMP_MAX_CALLS_PER_RUN} budgeted tickers.`)
 }
 
 main().catch((error) => {
