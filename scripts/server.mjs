@@ -90,8 +90,40 @@ async function serveFile(res, filePath) {
   }
 }
 
+const ROBOTS_TXT = `User-agent: *
+Allow: /
+
+User-agent: GPTBot
+Allow: /
+
+User-agent: ChatGPT-User
+Allow: /
+
+User-agent: OAI-SearchBot
+Allow: /
+
+User-agent: ClaudeBot
+Allow: /
+
+User-agent: anthropic-ai
+Allow: /
+
+User-agent: PerplexityBot
+Allow: /
+
+User-agent: CCBot
+Allow: /
+
+User-agent: Google-Extended
+Allow: /
+`
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host || "127.0.0.1"}`)
+  if (url.pathname === "/robots.txt") {
+    res.writeHead(200, { "content-type": "text/plain; charset=utf-8" })
+    return res.end(ROBOTS_TXT)
+  }
   if (url.pathname === "/api/config") return json(res, 200, { aiIngestionEnabled: aiEnabled })
   if (url.pathname === "/api/ingest") {
     const ticker = String(url.searchParams.get("ticker") || "").trim().toUpperCase()

@@ -482,6 +482,28 @@ function renderAllFieldsReview() {
   `
 }
 
+function renderNeedsAttention() {
+  const audit = state.ingestionAudit
+  if (!audit || audit.error) return ""
+  const missingFields = Object.entries(audit.fieldStatus || {})
+    .filter(([, status]) => status === "missing")
+    .map(([key]) => fieldMap[key])
+    .filter(Boolean)
+  if (!missingFields.length) return ""
+  return `
+    <section class="panel needs-attention-panel">
+      <div class="section-title">
+        <div>
+          <p class="eyebrow">Action needed</p>
+          <h2>${missingFields.length} Field${missingFields.length === 1 ? "" : "s"} Need Your Input</h2>
+        </div>
+      </div>
+      <p class="muted">No connected source returned a value for these — enter them directly below. Everything else loaded automatically.</p>
+      <div class="field-grid">${missingFields.map(renderField).join("")}</div>
+    </section>
+  `
+}
+
 function renderAutoIntake() {
   const review = automationReview(state.inputs)
   const file = state.reportFile
@@ -538,6 +560,7 @@ function renderAutoIntake() {
         </div>
       </section>
 
+      ${renderNeedsAttention()}
       ${state.reviewAllFields ? renderAllFieldsReview() : renderInputs()}
 
       <details class="panel ai-fallback">
@@ -608,10 +631,16 @@ function renderRail(signal) {
 function renderResults(result) {
   const warnings = [...result.errors.map((item) => `Error: ${item}`), ...result.warnings]
   const comparison = result.ledger.budgets.financialComparison
-  const marketValue = state.marketSnapshot?.averageMarketCap || result.tracks.market.paths.observedEquity || 0
-  const currentMarketValue = state.marketSnapshot?.currentMarketCap || marketValue
-  const valueDifference = impliedValueDifference(result.outputs.fairCommonEquity, marketValue)
+  // Headline comparison anchors to the REAL, current market value — a 20-day trailing
+  // average can diverge sharply from today's actual price after a rally/selloff, which
+  // previously made "implied vs market" wildly misleading (e.g. showing 70% upside on a
+  // $1.1B implied value against a real $1B market cap). The average is still shown as
+  // supplementary context below, never as the primary percentage's denominator.
+  const currentMarketValue = state.marketSnapshot?.currentMarketCap || result.tracks.market.paths.observedEquity || 0
+  const averageMarketValue = state.marketSnapshot?.averageMarketCap || 0
+  const valueDifference = impliedValueDifference(result.outputs.fairCommonEquity, currentMarketValue)
   const averageWindow = state.marketSnapshot?.tradingDays || 0
+  const averageDiffersMeaningfully = averageMarketValue > 0 && currentMarketValue > 0 && Math.abs(averageMarketValue - currentMarketValue) / currentMarketValue > 0.01
   const trackRows = [
     ["DCF", "dcf", result.tracks.dcf],
     ["Direct Comps", "directComps", result.tracks.directComps],
@@ -631,14 +660,14 @@ function renderResults(result) {
             <p class="muted">Range ${money(result.bands.final.low)} - ${money(result.bands.final.high)}</p>
           </div>
           <div class="market-value-block">
-            <p class="eyebrow">${averageWindow ? `${averageWindow}-day average market value` : "Observed market value"}</p>
-            <h3>${marketValue > 0 ? money(marketValue) : "Unavailable"}</h3>
-            ${currentMarketValue > 0 && currentMarketValue !== marketValue ? `<p class="muted">Current ${money(currentMarketValue)}</p>` : ""}
+            <p class="eyebrow">Current market value</p>
+            <h3>${currentMarketValue > 0 ? money(currentMarketValue) : "Unavailable"}</h3>
+            ${averageDiffersMeaningfully ? `<p class="muted">${averageWindow}-day avg ${money(averageMarketValue)}</p>` : ""}
           </div>
           <div class="difference-block ${valueDifference !== null && valueDifference < 0 ? "difference-block--negative" : ""}">
-            <span>Implied vs ${averageWindow || "observed"}${averageWindow ? "-day average" : " market"}</span>
+            <span>Implied vs current market</span>
             <strong>${valueDifference === null ? "N/A" : `${valueDifference >= 0 ? "+" : ""}${pct(valueDifference, 1)}`}</strong>
-            <small>${valueDifference === null ? "Load market data to compare" : `(implied value - average market value) / average market value`}</small>
+            <small>${valueDifference === null ? "Load market data to compare" : `(implied value - current market value) / current market value`}</small>
           </div>
         </div>
         <div>

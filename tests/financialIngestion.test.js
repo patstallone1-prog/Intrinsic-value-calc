@@ -89,11 +89,20 @@ assert.equal(crossCheckedMarket.impliedSharesOutstanding, 40)
 assert.equal(crossCheckedMarket.crossChecks.find((check) => check.field === "marketCapitalization")?.status, "review")
 
 const finalized = finalizeNormalizedInputs(sec, market)
-assert.equal(finalized.inputs.sharePrice, 25)
+assert.equal(finalized.inputs.sharePrice, 30.5, "the observed-market comparison must anchor to the CURRENT price, not the trailing average, or a stale price can make the implied-vs-market percentage wildly misleading")
 assert.equal(finalized.inputs.dividendYield, 0.02)
 assert.equal(finalized.inputs.buybackYield, 0.01)
 assert.equal(finalized.inputs.marketCapOverride, undefined, "recent price should drive observed market value without a stale override")
-assert.ok(finalized.sourceNotes.sharePrice.includes("average"))
+assert.ok(finalized.sourceNotes.sharePrice.includes("Current price"))
+
+// Fallback: when no provider returns a live current price, fall back to the trailing average.
+const averageOnlyMarket = normalizeMarketSeries([
+  { provider: "Yahoo Finance", currentPrice: 0, prices: [20, 22, 24, 26, 28, 30], asOf: "2025-01-31" },
+], 40)
+assert.equal(averageOnlyMarket.currentPrice, 0)
+const averageOnlyFinalized = finalizeNormalizedInputs(sec, averageOnlyMarket)
+assert.equal(averageOnlyFinalized.inputs.sharePrice, 25, "should fall back to the trailing average only when no current price is available")
+assert.ok(averageOnlyFinalized.sourceNotes.sharePrice.includes("average") && averageOnlyFinalized.sourceNotes.sharePrice.includes("unavailable"))
 assert.ok(finalized.coverage.percent > 0.7)
 
 const crossSource = finalizeNormalizedInputs(sec, market, [{

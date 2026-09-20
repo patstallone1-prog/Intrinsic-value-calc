@@ -614,6 +614,21 @@ table {
   flex-wrap: wrap;
 }
 
+.needs-attention-panel {
+  border: 2px solid var(--warn-border);
+  background: var(--warn-bg);
+}
+
+.needs-attention-panel .eyebrow,
+.needs-attention-panel h2 {
+  color: var(--warn);
+}
+
+.needs-attention-panel .field input,
+.needs-attention-panel .field select {
+  border-color: var(--warn-border);
+}
+
 .review-alert {
   display: grid;
   gap: 3px;

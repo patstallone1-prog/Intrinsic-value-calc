@@ -573,9 +573,22 @@ export function finalizeNormalizedInputs(secNormalized, marketSnapshot, suppleme
     warnings.push(...(supplement.warnings || []))
   }
 
-  if (marketSnapshot.averagePrice > 0) {
+  // The observed-market comparison (implied fair value vs. real market value) must anchor
+  // to the CURRENT price, not a trailing average — a stale smoothed price can diverge
+  // sharply from today's actual value during a rally/selloff and produce a wildly
+  // misleading upside/downside percentage. The trailing average is still computed and
+  // returned in marketSnapshot for reference/display and for ratio-based fields
+  // (dividendYield/buybackYield below) where smoothing a noisy single-day price is
+  // legitimate; it just no longer drives the primary comparison.
+  if (marketSnapshot.currentPrice > 0) {
+    inputs.sharePrice = marketSnapshot.currentPrice
+    sourceNotes.sharePrice = `Current price from ${marketSnapshot.providers.join(" + ")}; as of ${marketSnapshot.asOf}`
+    availableFields.add("sharePrice")
+    providerByField.set("sharePrice", marketSnapshot.providers.join(" + "))
+  } else if (marketSnapshot.averagePrice > 0) {
+    // Fallback only when no provider returned a live current price.
     inputs.sharePrice = marketSnapshot.averagePrice
-    sourceNotes.sharePrice = `${marketSnapshot.tradingDays}-trading-day average from ${marketSnapshot.providers.join(" + ")}; as of ${marketSnapshot.asOf}`
+    sourceNotes.sharePrice = `${marketSnapshot.tradingDays}-trading-day average from ${marketSnapshot.providers.join(" + ")} (current price unavailable); as of ${marketSnapshot.asOf}`
     availableFields.add("sharePrice")
     providerByField.set("sharePrice", marketSnapshot.providers.join(" + "))
   }

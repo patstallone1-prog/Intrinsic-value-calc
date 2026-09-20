@@ -10,9 +10,38 @@ const ingestionModule = source.replace(/\nexport\s*\{[\s\S]*?\}\s*$/m, "\n")
 const page = await readFile(join(root, "index.html"), "utf8")
 const projectId = JSON.parse(await readFile(join(root, ".openai/hosting.json"), "utf8")).project_id
 
+const robotsTxt = `User-agent: *
+Allow: /
+
+User-agent: GPTBot
+Allow: /
+
+User-agent: ChatGPT-User
+Allow: /
+
+User-agent: OAI-SearchBot
+Allow: /
+
+User-agent: ClaudeBot
+Allow: /
+
+User-agent: anthropic-ai
+Allow: /
+
+User-agent: PerplexityBot
+Allow: /
+
+User-agent: CCBot
+Allow: /
+
+User-agent: Google-Extended
+Allow: /
+`
+
 const worker = `${ingestionModule}
 
 const page = ${JSON.stringify(page)}
+const robotsTxt = ${JSON.stringify(robotsTxt)}
 const cache = new Map()
 const AI_ENABLED = false
 
@@ -80,6 +109,7 @@ async function ingest(ticker, env) {
 export default {
   async fetch(request, env) {
     const url = new URL(request.url)
+    if (url.pathname === "/robots.txt") return new Response(robotsTxt, { headers: { "content-type": "text/plain; charset=utf-8" } })
     if (url.pathname === "/api/config") return json({ aiIngestionEnabled: AI_ENABLED })
     if (url.pathname === "/api/ingest") {
       const ticker = String(url.searchParams.get("ticker") || "").trim().toUpperCase()
