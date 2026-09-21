@@ -103,9 +103,15 @@ function factUnits(facts, tag) {
   return facts?.["us-gaap"]?.[tag]?.units || facts?.dei?.[tag]?.units || facts?.["ifrs-full"]?.[tag]?.units || {}
 }
 
+// Only the requested unit is ever used. Foreign private issuers file XBRL in their home
+// currency (KRW, JPY, EUR...); silently reading those rows as USD produced trillion-dollar
+// "fair values", so a filer with no USD facts contributes nothing here and its USD figures
+// come from the market-data supplements instead.
 function rowsForTag(facts, tag, preferredUnit = "USD") {
   const units = factUnits(facts, tag)
-  return units[preferredUnit] || Object.values(units)[0] || []
+  if (units[preferredUnit]) return units[preferredUnit]
+  if (preferredUnit === "shares") return Object.entries(units).find(([unit]) => /shares/i.test(unit))?.[1] || []
+  return []
 }
 
 function durationDays(row) {

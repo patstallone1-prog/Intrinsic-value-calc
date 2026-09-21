@@ -301,4 +301,10 @@ function round4(value) {
   return Math.round(value * 10_000) / 10_000
 }
 
+// Foreign filers reporting in a home currency must never be read as USD.
+const krwFacts = { "us-gaap": { Revenues: { units: { KRW: [annual(26_000_000_000_000, "2024-01-01", "2024-12-31", 2024)] } }, StockholdersEquity: { units: { KRW: [instant(18_000_000_000_000, "2024-12-31")] } } } }
+const krwSec = normalizeSecCompany({ company: { ticker: "KRW", title: "Won Filer", cik: "0000000012" }, submissions: {}, facts: krwFacts, today: "2025-06-01" })
+assert.equal(krwSec.inputs.revenue, 0, "KRW-denominated revenue must not be treated as dollars")
+assert.ok(!krwSec.availableFields.includes("revenue") && !krwSec.availableFields.includes("assetBackingValue"))
+
 console.log("financial ingestion tests passed")

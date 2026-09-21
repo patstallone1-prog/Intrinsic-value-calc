@@ -127,6 +127,8 @@ await mkdir(join(dist, ".openai"), { recursive: true })
 await copyFile(join(root, "index.html"), join(dist, "index.html"))
 // Static snapshot for hosts with no API: the page falls back to this when /api/screener 404s.
 await writeFile(join(dist, "screener-results.json"), JSON.stringify(screenerResults))
+await writeFile(join(dist, "robots.txt"), robotsTxt)
+await writeFile(join(dist, ".nojekyll"), "")
 await writeFile(join(root, "screener-results.json"), JSON.stringify(screenerResults))
 await writeFile(join(workerDir, "index.js"), worker)
 await writeFile(join(dist, ".openai/hosting.json"), `${JSON.stringify({ project_id: projectId }, null, 2)}\n`)

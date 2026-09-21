@@ -58,7 +58,8 @@ const state = {
   screenerLoading: false,
   screenerError: "",
   screenerSearch: "",
-  screenerSort: { field: "observedMarketCap", dir: "desc" },
+  screenerSort: { field: "impliedVsMarketPct", dir: "desc" },
+  screenerFilters: { sector: "", minCapM: 100, maxCapM: "", minCoverage: 60, minUpside: "", basis: "", onlyComplete: false, hideSuspect: true },
   screenerRaw: [],
   screenerOverrides: {},
   screenerSubmitted: new Set(),
@@ -1015,8 +1016,18 @@ function applyScreenerOverrides(row, overrides) {
   return updated
 }
 
+// A fair value more than 8x above or below the observed market value is almost always a
+// data problem (ADR ratio, share-class count, a supplement in the wrong currency) rather
+// than a real 700% mispricing, so those rows are flagged and hidden by default.
+function flagSuspect(row) {
+  const observed = row.observedMarketCap || 0
+  const fair = row.fairCommonEquity || 0
+  const ratio = observed > 0 && fair > 0 ? fair / observed : 1
+  return { ...row, suspect: observed <= 0 || ratio > 8 || ratio < 1 / 8 }
+}
+
 function decorateScreenerRows(rows, overrides) {
-  return rows.map((row) => applyScreenerOverrides({ ...row, unfilledCount: (row.missing || []).length }, overrides))
+  return rows.map((row) => flagSuspect(applyScreenerOverrides({ ...row, unfilledCount: (row.missing || []).length }, overrides)))
 }
 
 async function loadScreener() {
@@ -1147,6 +1158,23 @@ function renderScreenerFillForm(sorted) {
   `
 }
 
+function screenerSectors() {
+  return [...new Set((state.screenerResults || []).map((row) => row.sector).filter(Boolean))].sort()
+}
+
+const SCREENER_PRESETS = {
+  upside: { field: "impliedVsMarketPct", dir: "desc" },
+  downside: { field: "impliedVsMarketPct", dir: "asc" },
+  cap: { field: "observedMarketCap", dir: "desc" },
+  confidence: { field: "confidence", dir: "desc" },
+  coverage: { field: "coveragePct", dir: "desc" },
+}
+
+function screenerPresetKey() {
+  const { field, dir } = state.screenerSort
+  return Object.entries(SCREENER_PRESETS).find(([, sort]) => sort.field === field && sort.dir === dir)?.[0] || ""
+}
+
 function basisTag(basis) {
   if (basis === "ttm") return `<span class="pill" title="${escapeHtml(periodBasisLabel(basis))}">TTM</span>`
   if (basis === "quarterly-annualized") return `<span class="pill pill--warn" title="${escapeHtml(periodBasisLabel(basis))}">Q x4</span>`
@@ -1159,17 +1187,30 @@ function renderScreener() {
     return `
       <div class="results-layout">
         <section class="panel">
-          <div class="section-title"><h2>All Companies</h2></div>
+          <div class="section-title"><h2>Screened Companies</h2></div>
           <p class="muted">${state.screenerLoading ? "Loading every recorded company..." : state.screenerError || "No screener data yet."}</p>
         </section>
       </div>
     `
   }
   const search = state.screenerSearch.trim().toLowerCase()
-  const filtered = state.screenerResults.filter((row) => !search
-    || row.ticker?.toLowerCase().includes(search)
-    || row.companyName?.toLowerCase().includes(search)
-    || row.sector?.toLowerCase().includes(search))
+  const f = state.screenerFilters
+  const minCap = f.minCapM === "" ? 0 : Number(f.minCapM) * 1e6
+  const maxCap = f.maxCapM === "" ? Infinity : Number(f.maxCapM) * 1e6
+  const minCoverage = f.minCoverage === "" ? 0 : Number(f.minCoverage)
+  const minUpside = f.minUpside === "" ? -Infinity : Number(f.minUpside)
+  const filtered = state.screenerResults.filter((row) => {
+    if (search && !(row.ticker?.toLowerCase().includes(search) || row.companyName?.toLowerCase().includes(search) || row.sector?.toLowerCase().includes(search))) return false
+    if (f.sector && row.sector !== f.sector) return false
+    if (f.basis && row.periodBasis !== f.basis) return false
+    const cap = row.observedMarketCap || 0
+    if (cap < minCap || cap > maxCap) return false
+    if ((row.coveragePct || 0) < minCoverage) return false
+    if (f.onlyComplete && row.unfilledCount > 0) return false
+    if (f.hideSuspect && row.suspect) return false
+    if (minUpside !== -Infinity && !(row.impliedVsMarketPct >= minUpside)) return false
+    return true
+  })
   const { field, dir } = state.screenerSort
   const sorted = [...filtered].sort((a, b) => {
     const av = a[field]
@@ -1186,8 +1227,8 @@ function renderScreener() {
       <section class="panel">
         <div class="section-title">
           <div>
-            <p class="eyebrow">Every public company, one table</p>
-            <h2>All Companies</h2>
+            <p class="eyebrow">Every successfully screened public company</p>
+            <h2>Screened Companies</h2>
           </div>
           <button class="ghost" data-action="refresh-screener">${state.screenerLoading ? "Refreshing..." : "Refresh"}</button>
         </div>
@@ -1196,7 +1237,72 @@ function renderScreener() {
             ${(meta.totalRecorded || 0).toLocaleString()} of ${(meta.universeSize || 0).toLocaleString()} SEC-registered companies recorded${meta.running ? " - background run in progress" : ""} - last run ${meta.updatedAt ? new Date(meta.updatedAt).toLocaleString() : "n/a"}${filledCount ? ` - ${filledCount} compan${filledCount === 1 ? "y" : "ies"} completed by hand` : ""}.
           </p>
         ` : state.screenerResults.length === 0 ? `<p class="muted">No screener results recorded yet. Run "node scripts/run-screener.mjs" to start populating this table.</p>` : ""}
-        <input data-screener-search type="text" placeholder="Filter by ticker, company, or sector" value="${escapeHtml(state.screenerSearch)}" />
+        <div class="screener-filters">
+          <label class="field field--wide">
+            <span>Search</span>
+            <input data-screener-search type="text" placeholder="Ticker, company, or sector" value="${escapeHtml(state.screenerSearch)}" />
+          </label>
+          <label class="field">
+            <span>Sort</span>
+            <select data-screener-preset>
+              ${[
+                ["upside", "Highest implied upside"],
+                ["downside", "Most overvalued"],
+                ["cap", "Largest market cap"],
+                ["confidence", "Highest confidence"],
+                ["coverage", "Most complete data"],
+              ].map(([key, label]) => `<option value="${key}" ${screenerPresetKey() === key ? "selected" : ""}>${label}</option>`).join("")}
+            </select>
+          </label>
+          <label class="field">
+            <span>Industry</span>
+            <select data-screener-filter="sector">
+              <option value="">All industries</option>
+              ${screenerSectors().map((sector) => `<option value="${escapeHtml(sector)}" ${f.sector === sector ? "selected" : ""}>${escapeHtml(sector)}</option>`).join("")}
+            </select>
+          </label>
+          <label class="field">
+            <span>Market cap ($M) min</span>
+            <input data-screener-filter="minCapM" type="number" min="0" step="50" value="${escapeHtml(f.minCapM)}" placeholder="0" />
+          </label>
+          <label class="field">
+            <span>Market cap ($M) max</span>
+            <input data-screener-filter="maxCapM" type="number" min="0" step="50" value="${escapeHtml(f.maxCapM)}" placeholder="No limit" />
+          </label>
+          <label class="field">
+            <span>Min implied upside (%)</span>
+            <input data-screener-filter="minUpside" type="number" step="5" value="${escapeHtml(f.minUpside)}" placeholder="Any" />
+          </label>
+          <label class="field">
+            <span>Min data coverage (%)</span>
+            <input data-screener-filter="minCoverage" type="number" min="0" max="100" step="10" value="${escapeHtml(f.minCoverage)}" />
+          </label>
+          <label class="field">
+            <span>Period basis</span>
+            <select data-screener-filter="basis">
+              <option value="">Any</option>
+              <option value="annual" ${f.basis === "annual" ? "selected" : ""}>Annual filing</option>
+              <option value="ttm" ${f.basis === "ttm" ? "selected" : ""}>Trailing twelve months</option>
+            </select>
+          </label>
+          <label class="field field--checkbox">
+            <input data-screener-filter="onlyComplete" type="checkbox" ${f.onlyComplete ? "checked" : ""} />
+            <span>Only fully filled companies</span>
+          </label>
+          <label class="field field--checkbox">
+            <input data-screener-filter="hideSuspect" type="checkbox" ${f.hideSuspect ? "checked" : ""} />
+            <span>Hide likely data errors (fair value &gt;8x off market)</span>
+          </label>
+          <div class="screener-filter-actions">
+            <button class="ghost" data-action="screener-cap" data-min="200000" data-max="">Mega &gt;$200B</button>
+            <button class="ghost" data-action="screener-cap" data-min="10000" data-max="200000">Large</button>
+            <button class="ghost" data-action="screener-cap" data-min="2000" data-max="10000">Mid</button>
+            <button class="ghost" data-action="screener-cap" data-min="300" data-max="2000">Small</button>
+            <button class="ghost" data-action="screener-cap" data-min="0" data-max="300">Micro</button>
+            <button class="ghost" data-action="screener-reset">Reset filters</button>
+          </div>
+        </div>
+        <p class="muted">${sorted.length.toLocaleString()} compan${sorted.length === 1 ? "y" : "ies"} match. Implied upside = (fair value - market value) / market value; extreme values usually mean a share-count or ADR-ratio mismatch - raise the coverage floor or check the company's inputs before acting on them.</p>
         <div class="table-scroll">
         <table>
           <thead>
@@ -1209,7 +1315,7 @@ function renderScreener() {
           <tbody>
             ${sorted.slice(0, 500).map((row) => `
               <tr class="${row.manualFilled?.length ? "row--manual" : ""}">
-                <td>${escapeHtml(row.ticker || "")}</td>
+                <td>${escapeHtml(row.ticker || "")}${row.suspect ? ` <span class="pill pill--warn" title="Fair value is more than 8x away from market value - probably a share-count, ADR-ratio or currency mismatch">check</span>` : ""}</td>
                 <td>${escapeHtml(row.companyName || "")}</td>
                 <td>${escapeHtml(row.sector || "")}</td>
                 <td>${moneyHtml(row.currentPrice || 0)}</td>
@@ -1247,8 +1353,9 @@ function render() {
         <button data-tab="inputs" class="${state.activeTab === "inputs" ? "active" : ""}">Inputs</button>
         <button data-tab="results" class="${state.activeTab === "results" ? "active" : ""}">Results</button>
         <button data-tab="audit" class="${state.activeTab === "audit" ? "active" : ""}">Audit</button>
-        <button data-tab="screener" class="${state.activeTab === "screener" ? "active" : ""}">All Companies</button>
+        <button data-tab="screener" class="${state.activeTab === "screener" ? "active" : ""}">Screened Companies</button>
       </nav>
+      <button class="primary primary--sidebar" data-tab="screener">Browse ${state.screenerResults ? state.screenerResults.length.toLocaleString() : "all"} screened companies</button>
       <button class="ghost ghost--sidebar" data-action="reset-draft">Reset Draft</button>
       <div class="fixture-list">
         <span>Scenarios</span>
@@ -1263,7 +1370,7 @@ function render() {
         </div>
         <div class="topbar-actions">
           <button class="ghost" data-action="toggle-review-all">${state.reviewAllFields ? "Close All Fields" : "Review All Fields"}</button>
-          <button class="ghost ghost--accent" data-tab="screener">Browse All Companies</button>
+          <button class="ghost ghost--accent" data-tab="screener">Screened Companies</button>
           <button class="primary" data-tab="results">Run Valuation</button>
         </div>
       </header>
@@ -1326,6 +1433,19 @@ document.addEventListener("input", (event) => {
 })
 
 document.addEventListener("change", (event) => {
+  if (event.target.dataset.screenerPreset !== undefined) {
+    state.screenerSort = { ...SCREENER_PRESETS[event.target.value] }
+    render()
+    return
+  }
+  if (event.target.dataset.screenerFilter !== undefined) {
+    const key = event.target.dataset.screenerFilter
+    const value = event.target.type === "checkbox" ? event.target.checked : event.target.value
+    state.screenerFilters = { ...state.screenerFilters, [key]: value }
+    state.screenerFormPage = 1
+    render()
+    return
+  }
   const fieldKey = event.target.dataset.field
   if (fieldKey) {
     const field = fields.find((item) => item.key === fieldKey)
@@ -1351,6 +1471,10 @@ async function ingestCompany() {
   render()
   try {
     const response = await fetch(`/api/ingest?ticker=${encodeURIComponent(ticker)}`)
+    const contentType = response.headers.get("content-type") || ""
+    if (!contentType.includes("application/json")) {
+      throw new Error("Live filing ingestion needs the server build and isn't available on this static site. Use Screened Companies for pre-computed valuations, or enter the inputs manually below.")
+    }
     const payload = await response.json()
     if (!response.ok) throw new Error(payload.error || `Ingestion failed (${response.status})`)
     state.inputs = normalizeInputs({ ...cleanIngestionBase(state.inputs), ...payload.inputs })
@@ -1409,6 +1533,17 @@ document.addEventListener("click", async (event) => {
   }
   if (action === "submit-screener-fill") {
     submitScreenerFill(target.dataset.ticker)
+  }
+  if (action === "screener-cap") {
+    state.screenerFilters = { ...state.screenerFilters, minCapM: target.dataset.min === "" ? "" : Number(target.dataset.min), maxCapM: target.dataset.max === "" ? "" : Number(target.dataset.max) }
+    state.screenerFormPage = 1
+    render()
+  }
+  if (action === "screener-reset") {
+    state.screenerFilters = { sector: "", minCapM: "", maxCapM: "", minCoverage: 0, minUpside: "", basis: "", onlyComplete: false, hideSuspect: true }
+    state.screenerSearch = ""
+    state.screenerFormPage = 1
+    render()
   }
   if (action === "more-screener-forms") {
     state.screenerFormPage = (state.screenerFormPage || 1) + 1
