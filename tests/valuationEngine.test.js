@@ -1015,6 +1015,23 @@ assert.ok(unknownMarket.tracks.dcf.projections[1].revenue > unknownMarket.tracks
   })
   assert.equal(preCommercialLowRd.multiples.rdInvestmentFactor, 1, "a pre-commercial biotech with low rdPct should still just be neutral (1.0), never penalized")
 
+  // --- Pre-profit DCF regime (standard young-company DCF conventions) ---
+  const preProfitDcf = runCase("pre-profit dcf regime", { ...dcfStabilityInputs, profitabilityStatus: "Revenue-Generating / Unprofitable", opexRatio: 0.78, marginChangeYoy: 0.04, capitalStatus: "Public", sharePrice: 20, sharesOutstanding: 50_000_000 })
+  const preDcf = preProfitDcf.tracks.dcf
+  assert.ok(preDcf.regime.startsWith("pre-profit"), "an unprofitable company converging up to a positive margin should use the pre-profit DCF regime")
+  assert.ok(preDcf.horizonYears >= 8, "pre-profit companies get a long enough explicit horizon to reach mature margins before the terminal value")
+  assert.ok(preDcf.matureDiscountRate < preDcf.startDiscountRate, "the mature discount rate must sit below today's start-up rate")
+  const rates = preDcf.projections.map((row) => row.discountRate)
+  assert.ok(rates.every((rate, index) => index === 0 || rate <= rates[index - 1] + 1e-9), "the discount rate must fade monotonically toward the mature rate")
+  assert.ok(Math.abs(rates.at(-1) - preDcf.matureDiscountRate) < 1e-3, "the terminal year is discounted at the mature rate")
+  const marginsPath = preDcf.projections.map((row) => row.fcfMargin)
+  assert.ok(marginsPath.every((value, index) => index === 0 || value >= marginsPath[index - 1] - 1e-9), "the margin path must improve monotonically toward the mature margin")
+  const stepSizes = marginsPath.slice(1).map((value, index) => value - marginsPath[index])
+  assert.ok(Math.max(...stepSizes) - Math.min(...stepSizes) < 0.01, "pre-profit margin convergence is straight-line, not front-loaded")
+  const constantRateDcf = runCase("dcf mature regime unchanged", { ...dcfStabilityInputs, profitabilityStatus: "FCF Positive", capitalStatus: "Public", sharePrice: 20, sharesOutstanding: 50_000_000 })
+  assert.equal(constantRateDcf.tracks.dcf.matureDiscountRate, constantRateDcf.tracks.dcf.startDiscountRate, "a healthy public company has no start-up premium to fade, so its DCF is the original constant-rate model")
+  assert.equal(constantRateDcf.tracks.dcf.horizonYears, constantRateDcf.input.projectionYears, "healthy companies keep the configured horizon")
+
   console.log("eval system 2 valuation tests passed")
 }
 

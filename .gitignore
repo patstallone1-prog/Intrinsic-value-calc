@@ -3,3 +3,4 @@ graphify-out/
 data/screener-run.log
 .env
 .env.*
+/screener-results.json

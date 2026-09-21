@@ -193,4 +193,112 @@ const perShareCrossCheck = finalizeNormalizedInputs(sec, market, [{
 assert.equal(perShareCrossCheck.inputs.tangibleBookValue, 550, "primary SEC-derived tangibleBookValue should be retained over a conflicting per-share-derived supplement value")
 assert.equal(perShareCrossCheck.crossChecks.find((check) => check.field === "tangibleBookValue")?.status, "review")
 
+// Inferred zeros: a filed cash-flow statement with no dividend/repurchase line and a filed
+// balance sheet with no debt line (and negligible interest) are measured zeros, not gaps.
+const inferredFacts = structuredClone(facts)
+delete inferredFacts["us-gaap"].PaymentsOfDividendsCommonStock
+delete inferredFacts["us-gaap"].PaymentsForRepurchaseOfCommonStock
+delete inferredFacts["us-gaap"].LongTermDebtNoncurrent
+inferredFacts["us-gaap"].NetCashProvidedByUsedInFinancingActivities = usd([annual(-40, "2024-01-01", "2024-12-31", 2024)])
+const inferredSec = normalizeSecCompany({ company: { ticker: "INF", title: "Inferred Co", cik: "0000000003" }, submissions: {}, facts: inferredFacts })
+assert.equal(inferredSec.inputs.debt, 0)
+assert.ok(inferredSec.availableFields.includes("debt"), "no debt line on a filed balance sheet with no interest expense is a measured zero")
+assert.equal(inferredSec.measuredRawMetrics.dividendsInferredZero, true)
+assert.equal(inferredSec.measuredRawMetrics.buybacksInferredZero, true)
+const inferredFinal = finalizeNormalizedInputs(inferredSec, averageOnlyMarket)
+assert.equal(inferredFinal.fieldStatus.dividendYield, "measured-zero", "absent dividend line on a filed cash-flow statement is a measured zero")
+assert.equal(inferredFinal.fieldStatus.buybackYield, "measured-zero", "absent repurchase line on a filed cash-flow statement is a measured zero")
+assert.ok(inferredFinal.sourceNotes.dividendYield.includes("Measured zero"))
+
+// Material interest expense with no recognized debt tag means the debt is probably under a
+// custom tag - leave it missing for a human rather than silently zeroing it.
+const interestFacts = structuredClone(inferredFacts)
+interestFacts["us-gaap"].InterestExpense = usd([annual(25, "2024-01-01", "2024-12-31", 2024)])
+const interestSec = normalizeSecCompany({ company: { ticker: "INT", title: "Interest Co", cik: "0000000004" }, submissions: {}, facts: interestFacts })
+assert.ok(!interestSec.availableFields.includes("debt"), "material interest expense without a debt tag must stay missing")
+
+// Debt assembly never double-counts: the all-in LongTermDebt tag already includes current
+// maturities, so LongTermDebtCurrent is skipped when it is the only long-term tag present.
+const inclusiveFacts = structuredClone(facts)
+delete inclusiveFacts["us-gaap"].LongTermDebtNoncurrent
+inclusiveFacts["us-gaap"].LongTermDebt = usd([instant(150, "2024-12-31")])
+inclusiveFacts["us-gaap"].LongTermDebtCurrent = usd([instant(30, "2024-12-31")])
+inclusiveFacts["us-gaap"].ShortTermBorrowings = usd([instant(10, "2024-12-31")])
+const inclusiveSec = normalizeSecCompany({ company: { ticker: "INC", title: "Inclusive Co", cik: "0000000005" }, submissions: {}, facts: inclusiveFacts })
+assert.equal(inclusiveSec.inputs.debt, 160, "LongTermDebt (inclusive of current maturities) + short-term borrowings, without re-adding LongTermDebtCurrent")
+const combinedFacts = structuredClone(inclusiveFacts)
+combinedFacts["us-gaap"].DebtLongtermAndShorttermCombinedAmount = usd([instant(175, "2024-12-31")])
+const combinedSec = normalizeSecCompany({ company: { ticker: "CMB", title: "Combined Co", cik: "0000000006" }, submissions: {}, facts: combinedFacts })
+assert.equal(combinedSec.inputs.debt, 175, "a combined total debt tag wins outright over its pieces")
+
+// Market feed: a full price history with no dividend events is a measured zero dividend.
+const noDividendMarket = normalizeMarketSeries([
+  { provider: "Yahoo Finance", currentPrice: 30, prices: Array.from({ length: 250 }, () => 30), annualDividendPerShare: 0, annualDividendAvailable: true, asOf: "2025-01-31" },
+], 40)
+assert.equal(noDividendMarket.annualDividendAvailable, true)
+const noDivFacts = structuredClone(facts)
+delete noDivFacts["us-gaap"].PaymentsOfDividendsCommonStock
+const noDivFinal = finalizeNormalizedInputs(normalizeSecCompany({ company: { ticker: "NDV", title: "No Div Co", cik: "0000000007" }, submissions: {}, facts: noDivFacts }), noDividendMarket)
+assert.equal(noDivFinal.fieldStatus.dividendYield, "measured-zero", "market feed with a full history and no dividend events is a measured zero")
+
+// Period basis: annual filings are the default; when the latest 10-K is stale the flows come
+// from a labelled trailing-twelve-month construction (10-K + later 10-Qs - same quarters a
+// year earlier), never from a bare quarter treated as a year.
+function quarter(val, start, end, fy, fp, form = "10-Q") {
+  return { val, start, end, fy, fp, form, filed: end }
+}
+const ttmFacts = {
+  "us-gaap": {
+    Revenues: usd([
+      annual(800, "2023-01-01", "2023-12-31", 2023),
+      annual(1_000, "2024-01-01", "2024-12-31", 2024),
+      quarter(180, "2023-01-01", "2023-03-31", 2023, "Q1"), quarter(190, "2023-04-01", "2023-06-30", 2023, "Q2"), quarter(200, "2023-07-01", "2023-09-30", 2023, "Q3"),
+      quarter(230, "2024-01-01", "2024-03-31", 2024, "Q1"), quarter(240, "2024-04-01", "2024-06-30", 2024, "Q2"), quarter(250, "2024-07-01", "2024-09-30", 2024, "Q3"),
+      quarter(300, "2025-01-01", "2025-03-31", 2025, "Q1"), quarter(310, "2025-04-01", "2025-06-30", 2025, "Q2"), quarter(320, "2025-07-01", "2025-09-30", 2025, "Q3"),
+    ]),
+    NetIncomeLoss: usd([
+      annual(100, "2024-01-01", "2024-12-31", 2024),
+      quarter(20, "2024-01-01", "2024-03-31", 2024, "Q1"), quarter(20, "2024-04-01", "2024-06-30", 2024, "Q2"), quarter(20, "2024-07-01", "2024-09-30", 2024, "Q3"),
+      quarter(40, "2025-01-01", "2025-03-31", 2025, "Q1"), quarter(40, "2025-04-01", "2025-06-30", 2025, "Q2"), quarter(40, "2025-07-01", "2025-09-30", 2025, "Q3"),
+    ]),
+    StockholdersEquity: usd([instant(700, "2024-12-31"), { val: 760, end: "2025-09-30", form: "10-Q", filed: "2025-11-01" }]),
+  },
+}
+const ttmSec = normalizeSecCompany({ company: { ticker: "TTM", title: "TTM Co", cik: "0000000008" }, submissions: {}, facts: ttmFacts, today: "2026-09-20" })
+assert.equal(ttmSec.periodBasis, "ttm")
+assert.equal(ttmSec.periodEnd, "2025-09-30")
+assert.equal(ttmSec.inputs.revenue, 1_000 + 930 - 720, "TTM = FY2024 + Q1-Q3 2025 - Q1-Q3 2024")
+assert.equal(ttmSec.inputs.revenueGrowth, round4((1_210 - (800 + 720 - 570)) / (800 + 720 - 570)), "growth compares like-for-like trailing periods")
+assert.equal(ttmSec.rawMetrics.netIncome, 100 + 120 - 60)
+assert.equal(ttmSec.inputs.assetBackingValue, 760, "balance-sheet instants align to the TTM period end")
+assert.ok(ttmSec.warnings.some((w) => w.includes("trailing twelve months")))
+assert.ok(ttmSec.sourceNotes.revenue.includes("trailing twelve months"))
+
+const freshSec = normalizeSecCompany({ company: { ticker: "TTM", title: "TTM Co", cik: "0000000008" }, submissions: {}, facts: ttmFacts, today: "2025-06-01" })
+assert.equal(freshSec.periodBasis, "annual", "a 10-K under 15 months old keeps the annual basis")
+assert.equal(freshSec.inputs.revenue, 1_000)
+
+const loneQuarterFacts = { "us-gaap": { Revenues: usd([quarter(250, "2025-07-01", "2025-09-30", 2025, "Q3")]) } }
+const loneSec = normalizeSecCompany({ company: { ticker: "LQ", title: "Lone Quarter Co", cik: "0000000009" }, submissions: {}, facts: loneQuarterFacts, today: "2026-09-20" })
+assert.equal(loneSec.periodBasis, "annual")
+assert.equal(loneSec.inputs.revenue, 0, "a lone quarter is never annualized into a fake year; the field stays unfilled for a supplement provider or a person")
+assert.ok(!loneSec.availableFields.includes("revenue"))
+const fourQuarterFacts = { "us-gaap": { Revenues: usd([
+  quarter(200, "2025-01-01", "2025-03-31", 2025, "Q1"), quarter(210, "2025-04-01", "2025-06-30", 2025, "Q2"),
+  quarter(220, "2025-07-01", "2025-09-30", 2025, "Q3"), quarter(230, "2025-10-01", "2025-12-31", 2025, "Q4"),
+]) } }
+const fourSec = normalizeSecCompany({ company: { ticker: "FQ", title: "Four Quarter Co", cik: "0000000010" }, submissions: {}, facts: fourQuarterFacts, today: "2026-09-20" })
+assert.equal(fourSec.periodBasis, "ttm")
+assert.equal(fourSec.inputs.revenue, 860, "four consecutive quarters with no fiscal-year filing sum to a labelled TTM")
+const gappedFacts = { "us-gaap": { Revenues: usd([
+  annual(1_000, "2024-01-01", "2024-12-31", 2024),
+  quarter(300, "2025-07-01", "2025-09-30", 2025, "Q3"), quarter(250, "2024-07-01", "2024-09-30", 2024, "Q3"),
+]) } }
+const gappedSec = normalizeSecCompany({ company: { ticker: "GAP", title: "Gapped Co", cik: "0000000011" }, submissions: {}, facts: gappedFacts, today: "2026-09-20" })
+assert.equal(gappedSec.periodBasis, "annual", "quarters that don't chain contiguously from the fiscal year end can't form a TTM; the stale annual is kept and labelled")
+
+function round4(value) {
+  return Math.round(value * 10_000) / 10_000
+}
+
 console.log("financial ingestion tests passed")

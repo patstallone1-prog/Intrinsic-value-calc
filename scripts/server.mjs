@@ -43,6 +43,45 @@ async function readScreenerMeta() {
   }
 }
 
+const screenerOverridesPath = path.join(root, "data/screener-overrides.json")
+
+async function readScreenerOverrides() {
+  try {
+    return JSON.parse(await fs.readFile(screenerOverridesPath, "utf8"))
+  } catch {
+    return {}
+  }
+}
+
+function readBody(req) {
+  return new Promise((resolve, reject) => {
+    const chunks = []
+    req.on("data", (chunk) => {
+      chunks.push(chunk)
+      if (chunks.reduce((sum, item) => sum + item.length, 0) > 256_000) reject(new Error("Request body too large"))
+    })
+    req.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")))
+    req.on("error", reject)
+  })
+}
+
+// Manual fill-ins submitted from the screener page. Kept as a plain per-ticker map so the
+// page can merge them over the recorded inputs and recompute; the screener itself never
+// overwrites them (a fresh provider value simply becomes the base the override sits on).
+async function saveScreenerOverride(ticker, inputs) {
+  const overrides = await readScreenerOverrides()
+  const clean = {}
+  for (const [key, value] of Object.entries(inputs || {})) {
+    if (!/^[A-Za-z0-9]{1,40}$/.test(key)) continue
+    if (typeof value === "number" && Number.isFinite(value)) clean[key] = value
+    else if (typeof value === "string" && value.length <= 200) clean[key] = value
+  }
+  overrides[ticker] = { ...(overrides[ticker] || {}), ...clean, submittedAt: new Date().toISOString() }
+  await fs.mkdir(path.dirname(screenerOverridesPath), { recursive: true })
+  await fs.writeFile(screenerOverridesPath, `${JSON.stringify(overrides, null, 2)}\n`, "utf8")
+  return overrides[ticker]
+}
+
 async function ingest(ticker) {
   const cacheKey = ticker.toUpperCase()
   const cached = cache.get(cacheKey)
@@ -106,8 +145,19 @@ const server = http.createServer(async (req, res) => {
   }
   if (url.pathname === "/api/config") return json(res, 200, { aiIngestionEnabled: aiEnabled })
   if (url.pathname === "/api/screener") {
-    const [results, meta] = await Promise.all([readScreenerResults(), readScreenerMeta()])
-    return json(res, 200, { results, meta })
+    const [results, meta, overrides] = await Promise.all([readScreenerResults(), readScreenerMeta(), readScreenerOverrides()])
+    return json(res, 200, { results, meta, overrides })
+  }
+  if (url.pathname === "/api/screener/overrides") {
+    if (req.method !== "POST") return json(res, 405, { error: "POST a JSON body of { ticker, inputs }." })
+    try {
+      const body = JSON.parse((await readBody(req)) || "{}")
+      const ticker = String(body.ticker || "").trim().toUpperCase()
+      if (!/^[A-Z0-9.-]{1,12}$/.test(ticker)) return json(res, 400, { error: "Enter a valid ticker." })
+      return json(res, 200, { ticker, override: await saveScreenerOverride(ticker, body.inputs) })
+    } catch (error) {
+      return json(res, 400, { error: error.message })
+    }
   }
   if (url.pathname === "/api/ingest") {
     const ticker = String(url.searchParams.get("ticker") || "").trim().toUpperCase()

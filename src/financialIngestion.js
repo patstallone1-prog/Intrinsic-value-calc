@@ -3,7 +3,7 @@ const SEC_FACTS_URL = (cik) => `https://data.sec.gov/api/xbrl/companyfacts/CIK${
 const SEC_SUBMISSIONS_URL = (cik) => `https://data.sec.gov/submissions/CIK${cik}.json`
 
 const FLOW_TAGS = {
-  revenue: ["RevenueFromContractWithCustomerExcludingAssessedTax", "SalesRevenueNet", "Revenues"],
+  revenue: ["RevenueFromContractWithCustomerExcludingAssessedTax", "SalesRevenueNet", "Revenues", "RevenuesNetOfInterestExpense", "RevenueFromContractWithCustomerIncludingAssessedTax", "Revenue"],
   grossProfit: ["GrossProfit"],
   costOfRevenue: ["CostOfGoodsAndServicesSold", "CostOfRevenue", "CostOfGoodsSold", "CostOfGoodsAndServiceExcludingDepreciationDepletionAndAmortization"],
   operatingIncome: ["OperatingIncomeLoss"],
@@ -15,16 +15,33 @@ const FLOW_TAGS = {
   capex: ["PaymentsToAcquirePropertyPlantAndEquipment", "PaymentsToAcquireOtherPropertyPlantAndEquipment", "PaymentsToAcquireProductiveAssets", "CapitalExpenditures"],
   researchDevelopment: ["ResearchAndDevelopmentExpense", "ResearchAndDevelopmentExpenseExcludingAcquiredInProcessCost"],
   operatingCashFlow: ["NetCashProvidedByUsedInOperatingActivities"],
-  dividendsPaid: ["PaymentsOfDividends", "PaymentsOfDividendsCommonStock", "PaymentsOfOrdinaryDividends"],
-  buybacks: ["PaymentsForRepurchaseOfCommonStock"],
-  eps: ["EarningsPerShareDiluted"],
+  dividendsPaid: [
+    "PaymentsOfDividendsCommonStock", "PaymentsOfDividends", "PaymentsOfOrdinaryDividends", "DividendsCommonStockCash",
+    "DividendsCash", "DividendsCommonStock", "DividendsPaidClassifiedAsFinancingActivities", "DividendsPaid",
+  ],
+  buybacks: [
+    "PaymentsForRepurchaseOfCommonStock", "PaymentsForRepurchaseOfEquity", "StockRepurchasedAndRetiredDuringPeriodValue",
+    "StockRepurchasedDuringPeriodValue", "TreasuryStockValueAcquiredCostMethod", "PaymentsToAcquireOrRedeemEntitysShares",
+  ],
+  financingCashFlow: ["NetCashProvidedByUsedInFinancingActivities", "CashFlowsFromUsedInFinancingActivities"],
+  interestExpense: ["InterestExpense", "InterestExpenseDebt", "InterestExpenseNonoperating", "InterestAndDebtExpense", "InterestPaidNet"],
+  eps: ["EarningsPerShareDiluted", "EarningsPerShareBasicAndDiluted", "DilutedEarningsLossPerShare"],
 }
 
 const INSTANT_TAGS = {
   cash: ["CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents", "CashAndCashEquivalentsAtCarryingValue"],
   shortTermInvestments: ["ShortTermInvestments", "MarketableSecuritiesCurrent"],
-  debtCurrent: ["ShortTermBorrowings", "LongTermDebtCurrent", "ShortTermDebtCurrent"],
-  debtLongTerm: ["LongTermDebtNoncurrent"],
+  // Debt is assembled from non-overlapping buckets so a filer that tags both a total and its
+  // pieces is never double-counted: a combined total wins outright; otherwise the noncurrent
+  // portion + current maturities + short-term borrowings are summed, and the all-in
+  // "LongTermDebt" tag (which already includes current maturities) is only used when no
+  // noncurrent-specific tag exists, in which case current maturities are skipped.
+  debtTotal: ["DebtLongtermAndShorttermCombinedAmount", "LongTermDebtAndCapitalLeaseObligationsIncludingCurrentMaturities", "DebtAndCapitalLeaseObligations", "Borrowings"],
+  debtLongTerm: ["LongTermDebtNoncurrent", "LongTermDebtAndCapitalLeaseObligationsNoncurrent", "LongTermDebtAndCapitalLeaseObligations", "ConvertibleNotesPayableNoncurrent", "LongTermNotesPayable", "SeniorLongTermNotes", "SecuredLongTermDebt", "UnsecuredLongTermDebt", "LongTermLineOfCredit", "NoncurrentPortionOfNoncurrentBorrowings", "LongtermBorrowings"],
+  debtLongTermInclusive: ["LongTermDebt"],
+  debtCurrent: ["LongTermDebtCurrent", "LongTermDebtAndCapitalLeaseObligationsCurrent", "DebtCurrent", "ConvertibleNotesPayableCurrent", "NotesPayableCurrent", "CurrentPortionOfLongtermBorrowings"],
+  shortTermBorrowings: ["ShortTermBorrowings", "ShortTermDebtCurrent", "CommercialPaper", "LinesOfCreditCurrent", "ShorttermBorrowings", "CurrentBorrowingsAndCurrentPortionOfNoncurrentBorrowings"],
+  liabilitiesCurrent: ["LiabilitiesCurrent", "CurrentLiabilities"],
   financeLeaseCurrent: ["FinanceLeaseLiabilityCurrent"],
   financeLeaseLongTerm: ["FinanceLeaseLiabilityNoncurrent"],
   inventory: ["InventoryNet", "InventoryFinishedGoodsNetOfReserves"],
@@ -47,7 +64,9 @@ const ENGINE_FINANCIAL_FIELDS = [
 ]
 
 const SIC_RULES = [
-  [/software|prepackaged|data processing|computer programming|information retrieval/i, ["SaaS / Enterprise Software", "Software / Subscription"]],
+  [/internet|online|social media|streaming|broadcast|video game|interactive entertainment/i, ["Consumer Internet / Media / Gaming", "Marketplace / Network Platform"]],
+  [/software|prepackaged|data processing|data preparation|computer processing|computer programming|information retrieval|edp services|computer integrated systems|information technology/i, ["SaaS / Enterprise Software", "Software / Subscription"]],
+  [/semiconductor|electronic component|computer peripheral|electronic computer|communications equipment/i, ["Industrial / Robotics / Automation", "Product / Hardware"]],
   [/bank|credit|security broker|insurance|investment advice|finance/i, ["Fintech / Financial Services", "Financial / Balance-Sheet Business"]],
   [/pharmaceutical|biological|medicinal|biotech/i, ["Biotech Therapeutics", "Biopharma / R&D Asset"]],
   [/medical|surgical|diagnostic|laboratory/i, ["Medical Devices", "Tools / Devices / Equipment"]],
@@ -135,6 +154,66 @@ function annualAt(facts, tags, periodEnd, unit = "USD") {
   return { tag: "", value: 0, row: null }
 }
 
+function quarterlyRowsForTag(facts, tag, unit = "USD") {
+  return dedupePeriods(rowsForTag(facts, tag, unit).filter((row) => {
+    if (!(row.val !== undefined && row.end)) return false
+    const duration = durationDays(row)
+    return ["10-Q", "10-K", "6-K", "20-F", "40-F"].includes(row.form) && duration >= 75 && duration <= 100
+  }))
+}
+
+function shiftYear(dateText, years) {
+  const date = new Date(dateText)
+  date.setUTCFullYear(date.getUTCFullYear() + years)
+  return date.toISOString().slice(0, 10)
+}
+
+function nearDate(a, b, toleranceDays = 12) {
+  return Math.abs(new Date(a) - new Date(b)) / 86_400_000 <= toleranceDays
+}
+
+// Trailing-twelve-month flow for one tag: latest fiscal year plus the quarters filed since it,
+// minus the same quarters a year earlier (the standard TTM construction; Q4 is never filed as
+// its own quarter, so the fiscal-year anchor is required). With no fiscal year at all, four
+// consecutive quarters are summed. A lone quarter is never annualized - that would pass a
+// quarterly figure off as a year - so the function returns null and a supplement provider's
+// annual figure is used instead.
+function ttmFlowForTag(facts, tag, unit = "USD") {
+  const annual = annualRowsForTag(facts, tag, unit).at(-1)
+  const quarters = quarterlyRowsForTag(facts, tag, unit)
+  const contiguous = (rows, anchorEnd) => rows.every((row, index) => {
+    const previousEnd = index === 0 ? anchorEnd : rows[index - 1].end
+    return nearDate(row.end, new Date(new Date(previousEnd).getTime() + 91 * 86_400_000).toISOString().slice(0, 10), 10)
+  })
+  if (annual) {
+    const recent = quarters.filter((row) => row.end > annual.end).slice(0, 3)
+    if (!recent.length || !contiguous(recent, annual.end)) return null
+    const prior = recent.map((row) => quarters.find((candidate) => nearDate(candidate.end, shiftYear(row.end, -1))))
+    if (prior.some((row) => !row)) return null
+    const value = number(annual.val) + recent.reduce((sum, row) => sum + number(row.val), 0) - prior.reduce((sum, row) => sum + number(row.val), 0)
+    return { tag, value, end: recent.at(-1).end, basis: "ttm", quarters: recent.length }
+  }
+  if (quarters.length >= 4) {
+    const lastFour = quarters.slice(-4)
+    if (contiguous(lastFour.slice(1), lastFour[0].end)) {
+      return { tag, value: lastFour.reduce((sum, row) => sum + number(row.val), 0), end: lastFour.at(-1).end, basis: "ttm", quarters: 4 }
+    }
+  }
+  return null
+}
+
+function ttmFlow(facts, tags, unit = "USD") {
+  for (const tag of tags) {
+    const result = ttmFlowForTag(facts, tag, unit)
+    if (result) return { ...result, row: { end: result.end } }
+  }
+  return null
+}
+
+function monthsBetween(fromDate, toDate) {
+  return (new Date(toDate) - new Date(fromDate)) / (86_400_000 * 30.44)
+}
+
 function instantAt(facts, tags, periodEnd, unit = "USD") {
   for (const tag of tags) {
     const candidates = rowsForTag(facts, tag, unit)
@@ -193,13 +272,31 @@ function sourceRecord(provider, metric, value, detail, date = "") {
   return { provider, metric, value: round(value, 6), detail, date }
 }
 
-export function normalizeSecCompany({ company, submissions = {}, facts = {} }) {
+export function normalizeSecCompany({ company, submissions = {}, facts = {}, today = new Date().toISOString().slice(0, 10) }) {
   const revenueSeries = annualSeries(facts, FLOW_TAGS.revenue)
-  const revenue = revenueSeries.at(-1)?.value || 0
-  const priorRevenue = revenueSeries.at(-2)?.value || 0
-  const periodEnd = revenueSeries.at(-1)?.end || ""
-  const priorPeriodEnd = revenueSeries.at(-2)?.end || ""
-  const flow = (key, end = periodEnd, unit = key === "eps" ? "USD/shares" : "USD") => annualAt(facts, FLOW_TAGS[key], end, unit)
+  const annualEnd = revenueSeries.at(-1)?.end || ""
+  // Annual filings are the default basis. A trailing-twelve-month basis built from the latest
+  // 10-K plus subsequent 10-Qs is used only when the annual figure is missing or older than
+  // 15 months, so annual and quarterly-derived numbers are never mixed silently - every flow
+  // carries the same basis and the result is labelled for the reader.
+  const annualStale = !annualEnd || monthsBetween(annualEnd, today) > 15
+  const revenueTtm = annualStale ? ttmFlow(facts, FLOW_TAGS.revenue) : null
+  const periodBasis = revenueTtm ? revenueTtm.basis : "annual"
+  const periodEnd = revenueTtm ? revenueTtm.end : annualEnd
+  const revenue = revenueTtm ? revenueTtm.value : revenueSeries.at(-1)?.value || 0
+  const priorPeriodEnd = revenueTtm ? shiftYear(revenueTtm.end, -1) : revenueSeries.at(-2)?.end || ""
+  const priorRevenueTtm = revenueTtm && revenueTtm.basis === "ttm"
+    ? (() => {
+      // Same construction shifted back one year, for a like-for-like growth rate.
+      const shifted = ttmFlowForTag({ "us-gaap": { [revenueTtm.tag]: { units: { USD: rowsForTag(facts, revenueTtm.tag).filter((row) => row.end <= priorPeriodEnd) } } } }, revenueTtm.tag)
+      return shifted && shifted.basis === "ttm" && nearDate(shifted.end, priorPeriodEnd) ? shifted.value : 0
+    })()
+    : 0
+  const priorRevenue = revenueTtm ? priorRevenueTtm : revenueSeries.at(-2)?.value || 0
+  const flow = (key, end = periodEnd, unit = key === "eps" ? "USD/shares" : "USD") => {
+    if (!revenueTtm || end !== periodEnd) return annualAt(facts, FLOW_TAGS[key], end, unit)
+    return ttmFlow(facts, FLOW_TAGS[key], unit) || annualAt(facts, FLOW_TAGS[key], annualEnd, unit)
+  }
   const instant = (key, end = periodEnd, unit = key === "sharesOutstanding" ? "shares" : "USD") => instantAt(facts, INSTANT_TAGS[key], end, unit)
 
   const grossReported = flow("grossProfit")
@@ -219,10 +316,19 @@ export function normalizeSecCompany({ company, submissions = {}, facts = {} }) {
   const operatingCashFlow = flow("operatingCashFlow")
   const dividendsPaid = flow("dividendsPaid")
   const buybacks = flow("buybacks")
+  const financingCashFlow = flow("financingCashFlow")
+  const interestExpense = flow("interestExpense")
   const eps = flow("eps")
   const cash = instant("cash")
   const shortTermInvestments = instant("shortTermInvestments")
-  const debtParts = [instant("debtCurrent"), instant("debtLongTerm"), instant("financeLeaseCurrent"), instant("financeLeaseLongTerm")]
+  const liabilitiesCurrent = instant("liabilitiesCurrent")
+  const debtTotal = instant("debtTotal")
+  const debtLongTerm = debtTotal.row ? { tag: "", value: 0, row: null } : instant("debtLongTerm")
+  const debtLongTermInclusive = debtTotal.row || debtLongTerm.row ? { tag: "", value: 0, row: null } : instant("debtLongTermInclusive")
+  const debtCurrent = debtTotal.row || debtLongTermInclusive.row ? { tag: "", value: 0, row: null } : instant("debtCurrent")
+  const shortTermBorrowings = debtTotal.row ? { tag: "", value: 0, row: null } : instant("shortTermBorrowings")
+  const leaseParts = /CapitalLease/.test(debtTotal.tag) ? [] : [instant("financeLeaseCurrent"), instant("financeLeaseLongTerm")]
+  const debtParts = [debtTotal, debtLongTerm, debtLongTermInclusive, debtCurrent, shortTermBorrowings, ...leaseParts]
   const inventory = instant("inventory")
   const ar = instant("ar")
   const ap = instant("ap")
@@ -246,6 +352,18 @@ export function normalizeSecCompany({ company, submissions = {}, facts = {} }) {
   const freeCashFlow = operatingCashFlow.value - Math.abs(capex.value)
   const totalCash = cash.value + shortTermInvestments.value
   const debt = sumValues(debtParts)
+  // A filed balance sheet with no debt line and no meaningful interest expense is a reliable
+  // measured zero (issuers must tag debt on the face of the statement), not a missing value.
+  // Interest above 0.2% of revenue means debt probably sits under a custom extension tag we
+  // don't scan, so that case stays "missing" for a human to fill rather than silently zeroed.
+  const balanceSheetFiled = Boolean(liabilities.row || liabilitiesCurrent.row)
+  const interestNegligible = !interestExpense.row || Math.abs(interestExpense.value) <= Math.max(revenue * 0.002, 0)
+  const debtMeasured = debtParts.some((item) => item.row) || (balanceSheetFiled && interestNegligible)
+  // Same rule for the cash-flow statement: a filed financing section with no dividend or
+  // repurchase line means none were paid that year.
+  const cashFlowFiled = Boolean(financingCashFlow.row && operatingCashFlow.row)
+  const dividendsInferredZero = !dividendsPaid.row && cashFlowFiled
+  const buybacksInferredZero = !buybacks.row && cashFlowFiled
   const tangibleBook = Math.max(equity.value - goodwill.value - intangibles.value, 0)
   const averageEquity = priorEquity.value > 0 ? (equity.value + priorEquity.value) / 2 : equity.value
   const averageTangibleEquity = priorEquity.value > 0
@@ -277,7 +395,10 @@ export function normalizeSecCompany({ company, submissions = {}, facts = {} }) {
     roe: averageEquity > 0 ? round(netIncome.value / averageEquity) : 0,
     rotce: averageTangibleEquity > 0 ? round(netIncome.value / averageTangibleEquity) : 0,
     sharesOutstanding: round(shares.value, 2),
-    eps: round(eps.value, 4),
+    // Issuers that report EPS only per share class (dimensioned facts, e.g. Visa) have no
+    // undimensioned EPS in Company Facts; net income over shares outstanding is the standard
+    // derivation and is labelled as such.
+    eps: round(eps.row ? eps.value : netIncome.row && shares.value > 0 ? netIncome.value / shares.value : 0, 4),
     asset1Type: land.value > 0 ? "Land / Owned Real Estate" : ppe.value > 0 ? "Equipment / Machinery" : "None",
     asset1Value: round(land.value || ppe.value, 2),
     asset2Type: shortTermInvestments.value > 0 ? "Public Securities / Investments" : "None",
@@ -289,20 +410,20 @@ export function normalizeSecCompany({ company, submissions = {}, facts = {} }) {
     operatingExpenses: operatingExpenses.value || componentOperatingExpenses,
     depreciationAmortization: Math.abs(da.value), ebitda, netIncome: netIncome.value,
     operatingCashFlow: operatingCashFlow.value, capex: Math.abs(capex.value), freeCashFlow,
-    dividendsPaid: Math.abs(dividendsPaid.value), buybacks: Math.abs(buybacks.value),
+    dividendsPaid: Math.abs(dividendsPaid.value), buybacks: Math.abs(buybacks.value), interestExpense: Math.abs(interestExpense.value),
     totalAssets: assets.value, totalLiabilities: liabilities.value, equity: equity.value,
     goodwill: goodwill.value, intangibles: intangibles.value, propertyPlantEquipment: ppe.value, land: land.value,
   }
 
   const availableFields = new Set()
-  if (revenueSeries.length) availableFields.add("revenue")
-  if (revenueSeries.length > 1) availableFields.add("revenueGrowth")
+  if (revenueSeries.length || revenueTtm) availableFields.add("revenue")
+  if (priorRevenue > 0) availableFields.add("revenueGrowth")
   if (grossReported.row || cost.row) availableFields.add("grossMargin")
   if ((priorGrossReported.row || priorCost.row) && (grossReported.row || cost.row)) availableFields.add("marginChangeYoy")
   if (operatingIncome.row || operatingExpenses.row || sellingGeneralAdministrative.row) availableFields.add("opexRatio")
   if (rd.row) availableFields.add("rdPct")
   if (cash.row || shortTermInvestments.row) availableFields.add("cash")
-  if (debtParts.some((item) => item.row)) availableFields.add("debt")
+  if (debtMeasured) availableFields.add("debt")
   if (capex.row) availableFields.add("capexPct")
   if (inventory.row) availableFields.add("inventory")
   if (ar.row) availableFields.add("ar")
@@ -312,12 +433,20 @@ export function normalizeSecCompany({ company, submissions = {}, facts = {} }) {
   if (equity.row && netIncome.row) availableFields.add("roe")
   if (equity.row && netIncome.row) availableFields.add("rotce")
   if (shares.row) availableFields.add("sharesOutstanding")
-  if (eps.row) availableFields.add("eps")
+  const epsDerived = !eps.row && netIncome.row && shares.value > 0
+  if (eps.row || epsDerived) availableFields.add("eps")
   const coverage = [...availableFields]
   const sourceNotes = Object.fromEntries(coverage.map((field) => [
     field,
-    `SEC Company Facts; ${inputs[field] === 0 ? "measured zero" : "normalized value"} from annual filing ending ${periodEnd || "latest"}`,
+    `SEC Company Facts; ${inputs[field] === 0 ? "measured zero" : "normalized value"} from ${periodBasisLabel(periodBasis)} ending ${periodEnd || "latest"}`,
   ]))
+  if (epsDerived) sourceNotes.eps = `SEC Company Facts; derived as net income / shares outstanding (EPS is reported per share class only) for ${periodBasisLabel(periodBasis)} ending ${periodEnd || "latest"}`
+  const periodStale = periodBasis === "annual" && Boolean(annualEnd) && annualStale
+  const basisWarnings = periodBasis === "ttm"
+    ? ["Latest annual filing is more than 15 months old; flow figures are trailing twelve months built from the last 10-K plus subsequent quarterly filings."]
+    : periodStale
+      ? [`Latest annual filing ended ${annualEnd} (${Math.round(monthsBetween(annualEnd, today))} months ago) and no contiguous quarterly filings were available to roll it forward; figures are that stale annual period.`]
+      : []
   const provenance = [
     revenueSeries.length ? sourceRecord("SEC Company Facts", "revenue", revenue, revenueSeries.at(-1)?.tag || "", periodEnd) : null,
     netIncome.row ? sourceRecord("SEC Company Facts", "netIncome", netIncome.value, netIncome.tag, periodEnd) : null,
@@ -329,15 +458,29 @@ export function normalizeSecCompany({ company, submissions = {}, facts = {} }) {
     ticker: company.ticker,
     cik: company.cik,
     periodEnd,
+    periodBasis,
+    periodStale,
     inputs,
     rawMetrics,
-    measuredRawMetrics: { dividendsPaid: Boolean(dividendsPaid.row), buybacks: Boolean(buybacks.row) },
+    measuredRawMetrics: {
+      dividendsPaid: Boolean(dividendsPaid.row),
+      buybacks: Boolean(buybacks.row),
+      dividendsInferredZero,
+      buybacksInferredZero,
+      interestExpense: Boolean(interestExpense.row),
+    },
     sourceNotes,
     provenance,
     coverage,
     availableFields: coverage,
-    warnings: revenue > 0 ? [] : ["SEC filing did not yield annual revenue; an alternate provider is required."],
+    warnings: [...basisWarnings, ...(revenue > 0 ? [] : ["SEC filing did not yield annual revenue; an alternate provider is required."])],
   }
+}
+
+export function periodBasisLabel(basis) {
+  if (basis === "ttm") return "trailing twelve months (10-K + subsequent 10-Qs)"
+  if (basis === "quarterly-annualized") return "latest quarter x 4 (annualized)"
+  return "annual filing"
 }
 
 function parseNasdaqNumber(raw, scale = 1) {
@@ -442,6 +585,7 @@ export function normalizeNasdaqCompany({ ticker, financials = {}, info = {}, sum
   setMeasured("assetBackingValue", equity !== null ? equity : assets !== null && liabilities !== null ? assets - liabilities : null)
   setMeasured("roe", roe)
   setMeasured("sharesOutstanding", sharesOutstanding)
+  setMeasured("eps", netIncome !== null && sharesOutstanding > 0 ? netIncome / sharesOutstanding : null)
   if (ppe !== null) {
     inputs.asset1Type = "Equipment / Machinery"
     inputs.asset1Value = round(ppe, 2)
@@ -453,6 +597,7 @@ export function normalizeNasdaqCompany({ ticker, financials = {}, info = {}, sum
     provider: "Nasdaq",
     ticker,
     periodEnd,
+    periodBasis: "annual",
     inputs,
     sourceNotes,
     availableFields: [...measured],
@@ -548,7 +693,7 @@ export function finalizeNormalizedInputs(secNormalized, marketSnapshot, suppleme
         inputs[field] = value
         availableFields.add(field)
         providerByField.set(field, supplement.provider)
-        sourceNotes[field] = `${supplement.provider}; ${value === 0 ? "measured zero" : "fallback value"} because the primary filing value was unavailable`
+        sourceNotes[field] = `${supplement.provider}; ${value === 0 ? "measured zero" : "fallback value"} because the primary filing value was unavailable${supplement.periodBasis ? ` (${periodBasisLabel(supplement.periodBasis)})` : ""}`
       } else if (typeof inputs[field] === "number" && Number.isFinite(inputs[field])) {
         const primaryValue = inputs[field]
         const absoluteDifference = Math.abs(primaryValue - value)
@@ -607,30 +752,52 @@ export function finalizeNormalizedInputs(secNormalized, marketSnapshot, suppleme
   }
   const marketBase = marketSnapshot.averageMarketCap || marketSnapshot.currentMarketCap
   if (marketBase > 0) {
-    const filingDividendMeasured = Boolean(secNormalized.measuredRawMetrics?.dividendsPaid)
-    const marketDividendMeasured = Boolean(marketSnapshot.annualDividendAvailable)
-    inputs.dividendYield = filingDividendMeasured
-      ? round(secNormalized.rawMetrics.dividendsPaid / marketBase)
-      : marketDividendMeasured && marketSnapshot.averagePrice > 0
-        ? round(marketSnapshot.annualDividendPerShare / marketSnapshot.averagePrice)
-        : 0
-    inputs.buybackYield = round(secNormalized.rawMetrics.buybacks / marketBase)
-    if (filingDividendMeasured || marketDividendMeasured) {
-      availableFields.add("dividendYield")
-      providerByField.set("dividendYield", filingDividendMeasured ? secNormalized.provider || "SEC" : marketSnapshot.providers.join(" + "))
+    const measured = secNormalized.measuredRawMetrics || {}
+    const raw = secNormalized.rawMetrics || {}
+    const filingDividendExplicit = Boolean(measured.dividendsPaid)
+    const marketDividendMeasured = Boolean(marketSnapshot.annualDividendAvailable) && marketSnapshot.averagePrice > 0
+    const supplementDividend = availableFields.has("dividendYield") && Number.isFinite(inputs.dividendYield)
+    // Source priority: an explicit filing line item, then the market feed's trailing
+    // twelve-month dividend events (a real "none paid" answer when the feed returned a full
+    // history), then a supplement provider's yield, then the filing's inferred zero.
+    if (filingDividendExplicit) {
+      inputs.dividendYield = round(raw.dividendsPaid / marketBase)
+      providerByField.set("dividendYield", secNormalized.provider || "SEC")
+      sourceNotes.dividendYield = "Annual cash dividends paid (filing) divided by recent average market capitalization"
+    } else if (marketDividendMeasured) {
+      inputs.dividendYield = round(marketSnapshot.annualDividendPerShare / marketSnapshot.averagePrice)
+      providerByField.set("dividendYield", marketSnapshot.providers.join(" + "))
+      sourceNotes.dividendYield = inputs.dividendYield === 0
+        ? "Measured zero - market feed shows no dividends paid in the trailing twelve months"
+        : "Trailing-twelve-month dividends per share (market feed) divided by recent average share price"
+    } else if (supplementDividend) {
+      sourceNotes.dividendYield = `${providerByField.get("dividendYield")}; reported dividend yield`
+    } else if (measured.dividendsInferredZero) {
+      inputs.dividendYield = 0
+      providerByField.set("dividendYield", secNormalized.provider || "SEC")
+      sourceNotes.dividendYield = "Measured zero - filed cash-flow statement has no dividend line item"
+    } else {
+      inputs.dividendYield = 0
+      sourceNotes.dividendYield = "Missing - no measured dividend value was returned"
     }
-    if (secNormalized.measuredRawMetrics?.buybacks) {
-      availableFields.add("buybackYield")
+    if (filingDividendExplicit || marketDividendMeasured || supplementDividend || measured.dividendsInferredZero) availableFields.add("dividendYield")
+
+    const supplementBuyback = availableFields.has("buybackYield") && Number.isFinite(inputs.buybackYield)
+    if (measured.buybacks) {
+      inputs.buybackYield = round(raw.buybacks / marketBase)
       providerByField.set("buybackYield", secNormalized.provider || "SEC")
+      sourceNotes.buybackYield = "Annual common-stock repurchases (filing) divided by recent average market capitalization"
+    } else if (supplementBuyback) {
+      sourceNotes.buybackYield = `${providerByField.get("buybackYield")}; repurchases divided by market capitalization`
+    } else if (measured.buybacksInferredZero) {
+      inputs.buybackYield = 0
+      providerByField.set("buybackYield", secNormalized.provider || "SEC")
+      sourceNotes.buybackYield = "Measured zero - filed cash-flow statement has no share-repurchase line item"
+    } else {
+      inputs.buybackYield = 0
+      sourceNotes.buybackYield = "Missing - no measured repurchase value was returned"
     }
-    sourceNotes.dividendYield = filingDividendMeasured
-      ? "Annual cash dividends paid divided by recent average market capitalization"
-      : marketDividendMeasured
-        ? "Trailing market-feed dividends per share divided by recent average share price"
-        : "Missing - no measured dividend value was returned"
-    sourceNotes.buybackYield = secNormalized.measuredRawMetrics?.buybacks
-      ? "Annual common-stock repurchases divided by recent average market capitalization"
-      : "Missing - no measured repurchase value was returned"
+    if (measured.buybacks || supplementBuyback || measured.buybacksInferredZero) availableFields.add("buybackYield")
   }
   if (marketSnapshot.warning) warnings.push(marketSnapshot.warning)
 
@@ -696,6 +863,9 @@ export async function fetchYahooMarketSeries(ticker) {
     currentPrice: number(result.meta?.regularMarketPrice) || prices.at(-1) || 0,
     prices,
     annualDividendPerShare,
+    // The chart call asks for dividend events over the trailing year; with a meaningful
+    // history returned, an empty event list is a measured "no dividends", not a gap.
+    annualDividendAvailable: prices.length >= 120,
     asOf: result.meta?.regularMarketTime ? new Date(result.meta.regularMarketTime * 1000).toISOString() : "",
   }
 }
@@ -746,9 +916,11 @@ export async function fetchAlphaVantageSupplement(ticker, apiKey) {
     eps: number(overview.EPS),
     tangibleBookValue: bookValuePerShareTotal,
     assetBackingValue: bookValuePerShareTotal,
+    dividendYield: number(overview.DividendYield),
   }
   return {
     provider: "Alpha Vantage",
+    periodBasis: "ttm",
     inputs,
     marketSeries: {
       provider: "Alpha Vantage",
@@ -779,8 +951,11 @@ export async function fetchFmpSupplement(ticker, apiKey) {
   const keyMetrics = keyMetricsRows?.[0] || {}
   const revenue = number(income.revenue)
   const priorRevenue = number(priorIncome.revenue)
-  const debt = number(balance.shortTermDebt) + number(balance.longTermDebt)
+  const debt = number(balance.totalDebt) || number(balance.shortTermDebt) + number(balance.longTermDebt)
   const freeCashFlow = number(cashFlow.freeCashFlow) || number(cashFlow.operatingCashFlow) - Math.abs(number(cashFlow.capitalExpenditure))
+  const marketCap = number(profile.mktCap)
+  const dividendYield = marketCap > 0 ? Math.abs(number(cashFlow.dividendsPaid)) / marketCap : 0
+  const buybackYield = marketCap > 0 ? Math.abs(number(cashFlow.commonStockRepurchased)) / marketCap : 0
   const revenueGrowth = priorRevenue > 0 ? (revenue - priorRevenue) / priorRevenue : 0
   const shares = number(profile.mktCap) > 0 && number(profile.price) > 0 ? number(profile.mktCap) / number(profile.price) : 0
   const equity = number(balance.totalStockholdersEquity)
@@ -812,9 +987,12 @@ export async function fetchFmpSupplement(ticker, apiKey) {
     ap: number(balance.accountPayables),
     sharesOutstanding: shares,
     eps: number(income.epsdiluted || income.eps),
+    dividendYield,
+    buybackYield,
   }
   return {
     provider: "Financial Modeling Prep",
+    periodBasis: "annual",
     inputs,
     marketSeries: { provider: "Financial Modeling Prep", currentPrice: number(profile.price), prices: [], asOf: income.date || "" },
     provenance: Object.entries(inputs).filter(([, value]) => typeof value === "number" && value !== 0).map(([metric, value]) => sourceRecord("Financial Modeling Prep", metric, value, "annual statements", income.date || "")),
@@ -892,6 +1070,7 @@ export async function ingestTicker(ticker, options = {}) {
     ticker: cacheKey,
     company: bundle?.company || { ticker: cacheKey, title: normalized.inputs.companyName },
     periodEnd: sec.periodEnd,
+    periodBasis: sec.periodBasis || (bundle ? "annual" : supplements[0]?.periodBasis || "annual"),
     marketSnapshot,
     providers: [bundle ? "SEC" : null, ...marketSources.map((item) => item.provider), ...supplements.map((item) => item.provider)]
       .filter((item, index, all) => item && all.indexOf(item) === index),

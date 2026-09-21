@@ -1439,8 +1439,25 @@ function discountRate(input, context, margins, ledger, growth) {
   // not a jurisdiction-level floor — it is fully mitigable by the signal's own trend and
   // stickiness dampening, so it does not also move floor/ceiling.
   const concentrationRiskPremium = ledger.signals.customerConcentration.effective * 0.035
+  const rate = round(clamp(base + stageRisk + sector.risk * (healthyPublic ? 0.3 : 1) + leverage + volatility + ledger.signals.probabilityUncertainty.effective * (healthyPublic ? 0.01 : 0.05) + ledger.signals.capitalBurden.effective * (healthyPublic ? 0.006 : 0.022) + growthAdj + sovereignRiskPremium + concentrationRiskPremium - resilience, floor, ceiling))
+  // The rate a not-yet-profitable company would earn once it is a profitable, mature
+  // operator in the same sector and jurisdiction. The DCF converges toward it over the
+  // explicit horizon (standard practice for young-company DCFs) instead of discounting the
+  // terminal value at today's start-up rate forever. Healthy companies are already there.
+  let matureRate = rate
+  if (!healthyPublic && !input.matureRateProbe) {
+    const probe = discountRate(
+      { ...input, matureRateProbe: true, profitabilityStatus: "Profitable", lifecycleStage: "Profitable / Mature" },
+      context,
+      { ...margins, fcfMargin: Math.max(margins.fcfMargin, 0.1) },
+      ledger,
+      { ...growth, effectiveGrowth: clamp(growth.effectiveGrowth, 0, 0.12) }
+    )
+    matureRate = Math.min(probe.rate, rate)
+  }
   return {
-    rate: round(clamp(base + stageRisk + sector.risk * (healthyPublic ? 0.3 : 1) + leverage + volatility + ledger.signals.probabilityUncertainty.effective * (healthyPublic ? 0.01 : 0.05) + ledger.signals.capitalBurden.effective * (healthyPublic ? 0.006 : 0.022) + growthAdj + sovereignRiskPremium + concentrationRiskPremium - resilience, floor, ceiling)),
+    rate,
+    matureRate: round(matureRate),
     components: { base: round(base), stageRisk: round(stageRisk), sectorRisk: round(sector.risk * (healthyPublic ? 0.3 : 1)), leverage: round(leverage), volatility: round(volatility), growthAdj: round(growthAdj), potentialOffset: round(potentialOffset), durabilityOffset: round(durabilityOffset), sovereignRiskPremium: round(sovereignRiskPremium), concentrationRiskPremium: round(concentrationRiskPremium), resilience: round(resilience), floor: round(floor), ceiling: round(ceiling) },
   }
 }
@@ -1637,10 +1654,8 @@ function dcfMarginCeiling(input, context, margins, ledger) {
 // the current margin was negative, which is what made it the highest-variance track.
 function intrinsicTrack(input, context, margins, growth, probability, discount, ledger) {
   const sector = sectorBaseline(input)
-  const N = clamp(Math.round(input.projectionYears), 3, 10)
-  const r = Math.max(discount.rate, 0.03)
+  const r0 = Math.max(discount.rate, 0.03)
   const startRev = Math.max(input.revenue, Math.min(input.sam * 0.001, 250_000), 10_000)
-  const tg = clamp(input.terminalGrowth * (0.8 + context.relevance.dcfReliability * 0.2), 0.01, Math.min(input.terminalGrowth, r - 0.02))
 
   // --- Margin path target ---
   const ceiling = dcfMarginCeiling(input, context, margins, ledger)
@@ -1663,13 +1678,36 @@ function intrinsicTrack(input, context, margins, growth, probability, discount, 
   }
   matureMargin = Math.min(matureMargin, marginCap)
   const marginGap = matureMargin - startMargin
-  const convergence = 0.15 ** (1 / N) // ~85% of the gap closed by the terminal year
+
+  // --- Pre-profit regime (standard young-company DCF) ---
+  // A company still converging up to a positive mature margin is modeled the way growth-
+  // company DCFs conventionally are: a 10-year explicit horizon so it actually reaches
+  // maturity before the terminal value, a straight-line (not front-loaded) margin path to
+  // the target, and a cost of capital that fades from today's start-up rate to the mature
+  // rate by the terminal year - with the terminal value itself built on the mature rate.
+  // Profitable and declining companies keep the original constant-rate, 85%-convergence
+  // model unchanged.
+  const preProfit = marginBoostEligible && !declining && startMargin < matureMargin
+  const N = preProfit
+    ? clamp(Math.max(Math.round(input.projectionYears), 8), 8, 10)
+    : clamp(Math.round(input.projectionYears), 3, 10)
+  // The rate fade applies to any company still carrying a start-up premium over its mature
+  // rate (for a healthy public company the two are equal, so nothing changes); the longer
+  // horizon and linear margin path apply only while it is converging up to profitability.
+  const rMature = clamp(discount.matureRate || r0, 0.03, r0)
+  const rateAt = (year) => (N > 1 ? r0 + (rMature - r0) * ((year - 1) / (N - 1)) : r0)
+  const tg = clamp(input.terminalGrowth * (0.8 + context.relevance.dcfReliability * 0.2), 0.01, Math.min(input.terminalGrowth, rMature - 0.02))
+  const convergence = 0.15 ** (1 / N) // ~85% of the gap closed by the terminal year (mature/declining regime)
+  const marginAt = (year) => (preProfit
+    ? clamp(startMargin + marginGap * (year / N), -0.6, marginCap)
+    : clamp(matureMargin - marginGap * convergence ** year, -0.6, marginCap))
 
   // --- Explicit projection ---
   const g1 = clamp(growth.effectiveGrowth, -0.4, 3)
   const growthDecay = 0.8
   let revenue = startRev
   let dcf = 0
+  let discountFactor = 1
   const projections = []
   for (let year = 1; year <= N; year += 1) {
     const gYear = tg + (g1 - tg) * growthDecay ** (year - 1)
@@ -1677,20 +1715,22 @@ function intrinsicTrack(input, context, margins, growth, probability, discount, 
     const dampedGrowth = gYear * Math.exp(-3 * penetration)
     const marketCeiling = input.sam > 0 ? Math.max(input.sam * 0.5, startRev) : Number.POSITIVE_INFINITY
     revenue = Math.min(revenue * (1 + dampedGrowth), marketCeiling)
-    const marginYear = clamp(matureMargin - marginGap * convergence ** year, -0.6, marginCap)
+    const marginYear = marginAt(year)
+    const rYear = rateAt(year)
+    discountFactor *= 1 + rYear
     const fcf = revenue * marginYear * probability.intrinsicMultiplier
-    const pv = fcf / (1 + r) ** year
+    const pv = fcf / discountFactor
     dcf += pv
-    projections.push({ year, revenue: round(revenue, 2), fcfMargin: round(marginYear), fcf: round(fcf, 2), presentValue: round(pv, 2), growth: round(dampedGrowth) })
+    projections.push({ year, revenue: round(revenue, 2), fcfMargin: round(marginYear), fcf: round(fcf, 2), presentValue: round(pv, 2), growth: round(dampedGrowth), discountRate: round(rYear) })
   }
 
-  // --- Terminal value on the mature-margin FCF ---
+  // --- Terminal value on the mature-margin FCF, at the mature cost of capital ---
   const terminalRevenue = projections.at(-1).revenue
   const terminalFcf = Math.max(terminalRevenue * (1 + tg) * matureMargin * probability.intrinsicMultiplier, 0)
-  const terminalValue = terminalFcf / Math.max(r - tg, 0.02)
-  const terminalCap = Math.max(terminalRevenue, 0) * Math.max(matureMargin, 0.02) * Math.min(1 / Math.max(r - tg, 0.02), 26)
+  const terminalValue = terminalFcf / Math.max(rMature - tg, 0.02)
+  const terminalCap = Math.max(terminalRevenue, 0) * Math.max(matureMargin, 0.02) * Math.min(1 / Math.max(rMature - tg, 0.02), 26)
   const boundedTerminal = Math.min(terminalValue, terminalCap)
-  const pvTerminal = boundedTerminal / (1 + r) ** N
+  const pvTerminal = boundedTerminal / discountFactor
 
   // --- Small yearly net dilution / buyback effect on intrinsic per-share value ---
   const annualDilution = clamp(input.expectedDilution / Math.max(N, 3), 0, 0.02)
@@ -1708,6 +1748,10 @@ function intrinsicTrack(input, context, margins, growth, probability, discount, 
     pvTerminal: round(pvTerminal, 2),
     shareEffect: round(shareEffect),
     annualNetShare: round(annualNetShare),
+    regime: preProfit ? "pre-profit (10y horizon, linear margin path, fading discount rate)" : declining ? "declining" : "mature",
+    horizonYears: N,
+    startDiscountRate: round(r0),
+    matureDiscountRate: round(rMature),
     marginTrajectory: {
       startMargin: round(startMargin),
       matureMargin: round(matureMargin),

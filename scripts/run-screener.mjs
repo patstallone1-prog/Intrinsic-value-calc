@@ -23,7 +23,7 @@
 import fs from "node:fs/promises"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
-import { ingestTicker } from "../src/financialIngestion.js"
+import { ENGINE_FINANCIAL_FIELDS, ingestTicker } from "../src/financialIngestion.js"
 import { DEFAULT_INPUTS, computeValuation, normalizeInputs } from "../src/valuationEngine.js"
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)))
@@ -42,6 +42,7 @@ const FMP_MAX_CALLS_PER_RUN = Math.max(0, Number(process.env.FMP_MAX_CALLS_PER_R
 const ALPHA_VANTAGE_MAX_CALLS_PER_RUN = Math.max(0, Number(process.env.ALPHA_VANTAGE_MAX_CALLS_PER_RUN ?? 10))
 let fmpTicketsUsed = 0
 let alphaVantageTicketsUsed = 0
+let alphaVantageThrottled = false
 
 function flagValue(name) {
   const index = process.argv.indexOf(name)
@@ -103,7 +104,7 @@ async function loadTickerUniverse() {
 
 async function ingestAndValue(ticker) {
   const fmpBudgetRemaining = fmpTicketsUsed < FMP_MAX_CALLS_PER_RUN
-  const alphaVantageBudgetRemaining = alphaVantageTicketsUsed < ALPHA_VANTAGE_MAX_CALLS_PER_RUN
+  const alphaVantageBudgetRemaining = alphaVantageTicketsUsed < ALPHA_VANTAGE_MAX_CALLS_PER_RUN && !alphaVantageThrottled
   const ingestion = await ingestTicker(ticker, {
     secUserAgent: SEC_UA,
     alphaVantageApiKey: alphaVantageBudgetRemaining ? process.env.ALPHA_VANTAGE_API_KEY : undefined,
@@ -111,6 +112,13 @@ async function ingestAndValue(ticker) {
   })
   if (ingestion.usedFmp) fmpTicketsUsed += 1
   if (ingestion.usedAlphaVantage) alphaVantageTicketsUsed += 1
+  // Once the key reports its daily cap, stop spending two calls per ticker on it for the rest
+  // of the run - the provider is simply unavailable until the quota resets.
+  const throttleNote = (ingestion.warnings || []).find((note) => /Alpha Vantage unavailable/.test(note) && /rate limit|requests per day|premium/i.test(note))
+  if (throttleNote && !alphaVantageThrottled) {
+    alphaVantageThrottled = true
+    console.log(`  Alpha Vantage daily quota reached after ${alphaVantageTicketsUsed} tickers; skipping it for the remainder of this run.`)
+  }
   const inputs = normalizeInputs({ ...DEFAULT_INPUTS, ...ingestion.inputs })
   const result = computeValuation(inputs)
   return { normalized: ingestion, marketSnapshot: ingestion.marketSnapshot, result, providers: ingestion.providers }
@@ -141,13 +149,35 @@ function buildRecord(ticker, title, cik, outcome) {
     inFairValueRange: result.marketComparison?.inFairValueRange ?? null,
     confidence: round(result.bands.quality, 3),
     coveragePct: round((normalized.coverage?.percent || 0) * 100, 1),
+    applicableCount: normalized.coverage?.total || 0,
     providers,
+    periodBasis: normalized.periodBasis || "annual",
     usedFmp: !!normalized.usedFmp,
     usedAlphaVantage: !!normalized.usedAlphaVantage,
     warningsCount: (result.warnings?.length || 0) + (normalized.warnings?.length || 0),
     errorsCount: result.errors?.length || 0,
+    // The ingested engine inputs and the fields no provider could fill travel with the
+    // record so the site can show a fill-in form per company and recompute the valuation
+    // in the browser once a person supplies the rest.
+    inputs: compactInputs(normalized.inputs),
+    missing: normalized.missing || [],
     processedAt: new Date().toISOString(),
   }
+}
+
+const RECORD_INPUT_FIELDS = [
+  ...ENGINE_FINANCIAL_FIELDS, "lifecycleStage", "profitabilityStatus", "capitalStatus",
+  "asset1Type", "asset1Value", "asset2Type", "asset2Value",
+]
+function compactInputs(inputs) {
+  const out = {}
+  for (const key of RECORD_INPUT_FIELDS) {
+    const value = inputs[key]
+    if (value === undefined || value === null) continue
+    if (typeof value === "number" && value === 0) continue
+    out[key] = typeof value === "number" ? round(value, 6) : value
+  }
+  return out
 }
 
 async function appendLine(filePath, line) {

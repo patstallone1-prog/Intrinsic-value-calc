@@ -104,7 +104,8 @@ export default {
     const url = new URL(request.url)
     if (url.pathname === "/robots.txt") return new Response(robotsTxt, { headers: { "content-type": "text/plain; charset=utf-8" } })
     if (url.pathname === "/api/config") return json({ aiIngestionEnabled: AI_ENABLED })
-    if (url.pathname === "/api/screener") return json({ results: screenerResults, meta: screenerMeta })
+    if (url.pathname === "/api/screener") return json({ results: screenerResults, meta: screenerMeta, overrides: {} })
+    if (url.pathname === "/api/screener/overrides") return json({ error: "This deployment has no persistent storage; fill-ins are kept in your browser." }, 501)
     if (url.pathname === "/api/ingest") {
       const ticker = String(url.searchParams.get("ticker") || "").trim().toUpperCase()
       if (!/^[A-Z0-9.-]{1,12}$/.test(ticker)) return json({ error: "Enter a valid public-company ticker." }, 400)
@@ -124,5 +125,8 @@ export default {
 await mkdir(workerDir, { recursive: true })
 await mkdir(join(dist, ".openai"), { recursive: true })
 await copyFile(join(root, "index.html"), join(dist, "index.html"))
+// Static snapshot for hosts with no API: the page falls back to this when /api/screener 404s.
+await writeFile(join(dist, "screener-results.json"), JSON.stringify(screenerResults))
+await writeFile(join(root, "screener-results.json"), JSON.stringify(screenerResults))
 await writeFile(join(workerDir, "index.js"), worker)
 await writeFile(join(dist, ".openai/hosting.json"), `${JSON.stringify({ project_id: projectId }, null, 2)}\n`)

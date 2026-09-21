@@ -12,6 +12,7 @@
   --warn: #9a5b12;
   --warn-bg: #fff3dc;
   --warn-border: #e3c184;
+  --negative: #b0392a;
   --track-bg: #e6ecf3;
   --pill-bg: #e6f1f8;
   --tag-selected-bg: #eef6fb;
@@ -37,6 +38,7 @@
     --warn: #e8b567;
     --warn-bg: #2e2510;
     --warn-border: #6b551f;
+    --negative: #f08a78;
     --track-bg: #202c42;
     --pill-bg: #1c3348;
     --tag-selected-bg: #1c3348;
@@ -59,6 +61,7 @@
   --warn: #e8b567;
   --warn-bg: #2e2510;
   --warn-border: #6b551f;
+  --negative: #f08a78;
   --track-bg: #202c42;
   --pill-bg: #1c3348;
   --tag-selected-bg: #1c3348;
@@ -435,6 +438,45 @@ main {
   font-weight: 700;
 }
 
+.field-source--negative,
+.negative {
+  color: var(--negative);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.field--negative input {
+  border-color: var(--negative);
+  color: var(--negative);
+}
+
+.negative-badge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--negative);
+  color: var(--negative);
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  vertical-align: middle;
+}
+
+.needs-attention-group {
+  margin-top: 14px;
+}
+
+.needs-attention-group h3 {
+  margin: 0 0 8px;
+  font-size: 13px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--warn);
+}
+
 .field input,
 .field select {
   width: 100%;
@@ -780,4 +822,55 @@ th {
   .hero-panel h2 {
     font-size: 32px;
   }
+}
+
+.ghost--accent {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.table-scroll {
+  overflow-x: auto;
+}
+
+.fill-grid {
+  display: grid;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.fill-card {
+  display: grid;
+  gap: 10px;
+  padding: 14px 16px;
+  border: 1px solid var(--warn-border);
+  border-radius: 10px;
+  background: var(--panel);
+}
+
+.fill-card header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px 12px;
+}
+
+.fill-card header strong {
+  font-family: var(--font-mono);
+  font-size: 14px;
+}
+
+.fill-card header small {
+  color: var(--muted);
+  flex-basis: 100%;
+}
+
+.fill-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 10px;
+}
+
+.row--manual td:first-child {
+  box-shadow: inset 3px 0 0 var(--accent-2);
 }

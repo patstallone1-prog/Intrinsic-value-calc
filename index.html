@@ -24,6 +24,7 @@
   --warn: #9a5b12;
   --warn-bg: #fff3dc;
   --warn-border: #e3c184;
+  --negative: #b0392a;
   --track-bg: #e6ecf3;
   --pill-bg: #e6f1f8;
   --tag-selected-bg: #eef6fb;
@@ -49,6 +50,7 @@
     --warn: #e8b567;
     --warn-bg: #2e2510;
     --warn-border: #6b551f;
+    --negative: #f08a78;
     --track-bg: #202c42;
     --pill-bg: #1c3348;
     --tag-selected-bg: #1c3348;
@@ -71,6 +73,7 @@
   --warn: #e8b567;
   --warn-bg: #2e2510;
   --warn-border: #6b551f;
+  --negative: #f08a78;
   --track-bg: #202c42;
   --pill-bg: #1c3348;
   --tag-selected-bg: #1c3348;
@@ -447,6 +450,45 @@ main {
   font-weight: 700;
 }
 
+.field-source--negative,
+.negative {
+  color: var(--negative);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.field--negative input {
+  border-color: var(--negative);
+  color: var(--negative);
+}
+
+.negative-badge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--negative);
+  color: var(--negative);
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  vertical-align: middle;
+}
+
+.needs-attention-group {
+  margin-top: 14px;
+}
+
+.needs-attention-group h3 {
+  margin: 0 0 8px;
+  font-size: 13px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--warn);
+}
+
 .field input,
 .field select {
   width: 100%;
@@ -792,6 +834,57 @@ th {
   .hero-panel h2 {
     font-size: 32px;
   }
+}
+
+.ghost--accent {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.table-scroll {
+  overflow-x: auto;
+}
+
+.fill-grid {
+  display: grid;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.fill-card {
+  display: grid;
+  gap: 10px;
+  padding: 14px 16px;
+  border: 1px solid var(--warn-border);
+  border-radius: 10px;
+  background: var(--panel);
+}
+
+.fill-card header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px 12px;
+}
+
+.fill-card header strong {
+  font-family: var(--font-mono);
+  font-size: 14px;
+}
+
+.fill-card header small {
+  color: var(--muted);
+  flex-basis: 100%;
+}
+
+.fill-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 10px;
+}
+
+.row--manual td:first-child {
+  box-shadow: inset 3px 0 0 var(--accent-2);
 }
 
     </style>
@@ -2248,8 +2341,25 @@ function discountRate(input, context, margins, ledger, growth) {
   // not a jurisdiction-level floor — it is fully mitigable by the signal's own trend and
   // stickiness dampening, so it does not also move floor/ceiling.
   const concentrationRiskPremium = ledger.signals.customerConcentration.effective * 0.035
+  const rate = round(clamp(base + stageRisk + sector.risk * (healthyPublic ? 0.3 : 1) + leverage + volatility + ledger.signals.probabilityUncertainty.effective * (healthyPublic ? 0.01 : 0.05) + ledger.signals.capitalBurden.effective * (healthyPublic ? 0.006 : 0.022) + growthAdj + sovereignRiskPremium + concentrationRiskPremium - resilience, floor, ceiling))
+  // The rate a not-yet-profitable company would earn once it is a profitable, mature
+  // operator in the same sector and jurisdiction. The DCF converges toward it over the
+  // explicit horizon (standard practice for young-company DCFs) instead of discounting the
+  // terminal value at today's start-up rate forever. Healthy companies are already there.
+  let matureRate = rate
+  if (!healthyPublic && !input.matureRateProbe) {
+    const probe = discountRate(
+      { ...input, matureRateProbe: true, profitabilityStatus: "Profitable", lifecycleStage: "Profitable / Mature" },
+      context,
+      { ...margins, fcfMargin: Math.max(margins.fcfMargin, 0.1) },
+      ledger,
+      { ...growth, effectiveGrowth: clamp(growth.effectiveGrowth, 0, 0.12) }
+    )
+    matureRate = Math.min(probe.rate, rate)
+  }
   return {
-    rate: round(clamp(base + stageRisk + sector.risk * (healthyPublic ? 0.3 : 1) + leverage + volatility + ledger.signals.probabilityUncertainty.effective * (healthyPublic ? 0.01 : 0.05) + ledger.signals.capitalBurden.effective * (healthyPublic ? 0.006 : 0.022) + growthAdj + sovereignRiskPremium + concentrationRiskPremium - resilience, floor, ceiling)),
+    rate,
+    matureRate: round(matureRate),
     components: { base: round(base), stageRisk: round(stageRisk), sectorRisk: round(sector.risk * (healthyPublic ? 0.3 : 1)), leverage: round(leverage), volatility: round(volatility), growthAdj: round(growthAdj), potentialOffset: round(potentialOffset), durabilityOffset: round(durabilityOffset), sovereignRiskPremium: round(sovereignRiskPremium), concentrationRiskPremium: round(concentrationRiskPremium), resilience: round(resilience), floor: round(floor), ceiling: round(ceiling) },
   }
 }
@@ -2446,10 +2556,8 @@ function dcfMarginCeiling(input, context, margins, ledger) {
 // the current margin was negative, which is what made it the highest-variance track.
 function intrinsicTrack(input, context, margins, growth, probability, discount, ledger) {
   const sector = sectorBaseline(input)
-  const N = clamp(Math.round(input.projectionYears), 3, 10)
-  const r = Math.max(discount.rate, 0.03)
+  const r0 = Math.max(discount.rate, 0.03)
   const startRev = Math.max(input.revenue, Math.min(input.sam * 0.001, 250_000), 10_000)
-  const tg = clamp(input.terminalGrowth * (0.8 + context.relevance.dcfReliability * 0.2), 0.01, Math.min(input.terminalGrowth, r - 0.02))
 
   // --- Margin path target ---
   const ceiling = dcfMarginCeiling(input, context, margins, ledger)
@@ -2472,13 +2580,36 @@ function intrinsicTrack(input, context, margins, growth, probability, discount, 
   }
   matureMargin = Math.min(matureMargin, marginCap)
   const marginGap = matureMargin - startMargin
-  const convergence = 0.15 ** (1 / N) // ~85% of the gap closed by the terminal year
+
+  // --- Pre-profit regime (standard young-company DCF) ---
+  // A company still converging up to a positive mature margin is modeled the way growth-
+  // company DCFs conventionally are: a 10-year explicit horizon so it actually reaches
+  // maturity before the terminal value, a straight-line (not front-loaded) margin path to
+  // the target, and a cost of capital that fades from today's start-up rate to the mature
+  // rate by the terminal year - with the terminal value itself built on the mature rate.
+  // Profitable and declining companies keep the original constant-rate, 85%-convergence
+  // model unchanged.
+  const preProfit = marginBoostEligible && !declining && startMargin < matureMargin
+  const N = preProfit
+    ? clamp(Math.max(Math.round(input.projectionYears), 8), 8, 10)
+    : clamp(Math.round(input.projectionYears), 3, 10)
+  // The rate fade applies to any company still carrying a start-up premium over its mature
+  // rate (for a healthy public company the two are equal, so nothing changes); the longer
+  // horizon and linear margin path apply only while it is converging up to profitability.
+  const rMature = clamp(discount.matureRate || r0, 0.03, r0)
+  const rateAt = (year) => (N > 1 ? r0 + (rMature - r0) * ((year - 1) / (N - 1)) : r0)
+  const tg = clamp(input.terminalGrowth * (0.8 + context.relevance.dcfReliability * 0.2), 0.01, Math.min(input.terminalGrowth, rMature - 0.02))
+  const convergence = 0.15 ** (1 / N) // ~85% of the gap closed by the terminal year (mature/declining regime)
+  const marginAt = (year) => (preProfit
+    ? clamp(startMargin + marginGap * (year / N), -0.6, marginCap)
+    : clamp(matureMargin - marginGap * convergence ** year, -0.6, marginCap))
 
   // --- Explicit projection ---
   const g1 = clamp(growth.effectiveGrowth, -0.4, 3)
   const growthDecay = 0.8
   let revenue = startRev
   let dcf = 0
+  let discountFactor = 1
   const projections = []
   for (let year = 1; year <= N; year += 1) {
     const gYear = tg + (g1 - tg) * growthDecay ** (year - 1)
@@ -2486,20 +2617,22 @@ function intrinsicTrack(input, context, margins, growth, probability, discount, 
     const dampedGrowth = gYear * Math.exp(-3 * penetration)
     const marketCeiling = input.sam > 0 ? Math.max(input.sam * 0.5, startRev) : Number.POSITIVE_INFINITY
     revenue = Math.min(revenue * (1 + dampedGrowth), marketCeiling)
-    const marginYear = clamp(matureMargin - marginGap * convergence ** year, -0.6, marginCap)
+    const marginYear = marginAt(year)
+    const rYear = rateAt(year)
+    discountFactor *= 1 + rYear
     const fcf = revenue * marginYear * probability.intrinsicMultiplier
-    const pv = fcf / (1 + r) ** year
+    const pv = fcf / discountFactor
     dcf += pv
-    projections.push({ year, revenue: round(revenue, 2), fcfMargin: round(marginYear), fcf: round(fcf, 2), presentValue: round(pv, 2), growth: round(dampedGrowth) })
+    projections.push({ year, revenue: round(revenue, 2), fcfMargin: round(marginYear), fcf: round(fcf, 2), presentValue: round(pv, 2), growth: round(dampedGrowth), discountRate: round(rYear) })
   }
 
-  // --- Terminal value on the mature-margin FCF ---
+  // --- Terminal value on the mature-margin FCF, at the mature cost of capital ---
   const terminalRevenue = projections.at(-1).revenue
   const terminalFcf = Math.max(terminalRevenue * (1 + tg) * matureMargin * probability.intrinsicMultiplier, 0)
-  const terminalValue = terminalFcf / Math.max(r - tg, 0.02)
-  const terminalCap = Math.max(terminalRevenue, 0) * Math.max(matureMargin, 0.02) * Math.min(1 / Math.max(r - tg, 0.02), 26)
+  const terminalValue = terminalFcf / Math.max(rMature - tg, 0.02)
+  const terminalCap = Math.max(terminalRevenue, 0) * Math.max(matureMargin, 0.02) * Math.min(1 / Math.max(rMature - tg, 0.02), 26)
   const boundedTerminal = Math.min(terminalValue, terminalCap)
-  const pvTerminal = boundedTerminal / (1 + r) ** N
+  const pvTerminal = boundedTerminal / discountFactor
 
   // --- Small yearly net dilution / buyback effect on intrinsic per-share value ---
   const annualDilution = clamp(input.expectedDilution / Math.max(N, 3), 0, 0.02)
@@ -2517,6 +2650,10 @@ function intrinsicTrack(input, context, margins, growth, probability, discount, 
     pvTerminal: round(pvTerminal, 2),
     shareEffect: round(shareEffect),
     annualNetShare: round(annualNetShare),
+    regime: preProfit ? "pre-profit (10y horizon, linear margin path, fading discount rate)" : declining ? "declining" : "mature",
+    horizonYears: N,
+    startDiscountRate: round(r0),
+    matureDiscountRate: round(rMature),
     marginTrajectory: {
       startMargin: round(startMargin),
       matureMargin: round(matureMargin),
@@ -3616,7 +3753,12 @@ const state = {
   screenerLoading: false,
   screenerError: "",
   screenerSearch: "",
-  screenerSort: { field: "impliedVsMarketPct", dir: "desc" },
+  screenerSort: { field: "observedMarketCap", dir: "desc" },
+  screenerRaw: [],
+  screenerOverrides: {},
+  screenerSubmitted: new Set(),
+  screenerFormStatus: "",
+  screenerFormPage: 1,
 }
 
 const fields = [
@@ -3837,6 +3979,24 @@ function pct(value, digits = 0) {
   return `${((value || 0) * 100).toFixed(digits)}%`
 }
 
+function signedHtml(text, value) {
+  return Number(value) < 0 ? `<span class="negative" title="Negative value">${text}</span>` : text
+}
+
+function moneyHtml(value) {
+  return signedHtml(money(value), value)
+}
+
+function pctHtml(value, digits = 0) {
+  return signedHtml(pct(value, digits), value)
+}
+
+function periodBasisLabel(basis) {
+  if (basis === "ttm") return "Trailing twelve months (10-K + later 10-Qs)"
+  if (basis === "quarterly-annualized") return "Latest quarter x 4 (annualized)"
+  return "Annual filing"
+}
+
 function formatValue(value, type) {
   if (type === "money") return money(value)
   if (type === "percent") return pct(value, 1)
@@ -3904,11 +4064,16 @@ function escapeHtml(value) {
 function renderField(field) {
   const value = state.inputs[field.key]
   const sourceStatus = state.ingestionAudit?.fieldStatus?.[field.key]
-  const isMissingNumeric = sourceStatus === "missing" && typeof value === "number" && value === 0
+  const unknownAfterIngestion = Boolean(state.ingestionAudit && !state.ingestionAudit.error) && sourceStatus === undefined
+    && !QUALITATIVE_GROUPS.has(field.group) && ["money", "number", "percent", "multiple"].includes(field.type)
+    && typeof value === "number" && value === 0
+  const isMissingNumeric = (sourceStatus === "missing" || unknownAfterIngestion) && typeof value === "number" && value === 0
   const sourceText = sourceStatus === "measured-zero"
     ? "Measured zero from source"
     : sourceStatus === "missing"
       ? "Missing - enter or verify"
+      : unknownAfterIngestion
+        ? "Not provided by any source - enter if known"
       : sourceStatus === "manual-zero"
         ? "Manual zero"
         : formatValue(value, field.type)
@@ -3933,11 +4098,12 @@ function renderField(field) {
   const min = field.type === "score" || field.type === "score5" ? "1" : ""
   const max = field.type === "score" ? "10" : field.type === "score5" ? "5" : ""
   const step = field.type === "money" ? "1000" : field.type === "number" ? "1" : "0.1"
+  const isNegative = typeof value === "number" && value < 0
   return `
-    <label class="field">
-      <span>${field.label}</span>
+    <label class="field ${isNegative ? "field--negative" : ""}">
+      <span>${field.label}${isNegative ? ` <em class="negative-badge">negative</em>` : ""}</span>
       <input data-field="${field.key}" type="${field.type === "text" ? "text" : "number"}" value="${isMissingNumeric ? "" : escapeHtml(inputDisplayValue(value, field.type))}" min="${min}" max="${max}" step="${step}" />
-      <small class="${sourceStatus === "missing" ? "field-source--missing" : sourceStatus === "measured-zero" || sourceStatus === "manual-zero" ? "field-source--verified" : ""}">${escapeHtml(sourceText)}</small>
+      <small class="${sourceStatus === "missing" || unknownAfterIngestion ? "field-source--missing" : sourceStatus === "measured-zero" || sourceStatus === "manual-zero" ? "field-source--verified" : isNegative ? "field-source--negative" : ""}">${escapeHtml(sourceText)}</small>
     </label>
   `
 }
@@ -4046,24 +4212,59 @@ function renderAllFieldsReview() {
   `
 }
 
-function renderNeedsAttention() {
+function unfilledInputFields() {
   const audit = state.ingestionAudit
-  if (!audit || audit.error) return ""
-  const missingFields = Object.entries(audit.fieldStatus || {})
-    .filter(([, status]) => status === "missing")
-    .map(([key]) => fieldMap[key])
-    .filter(Boolean)
+  if (!audit || audit.error) return []
+  const normalized = normalizeInputs(state.inputs)
+  const context = deriveContext(normalized)
+  const keys = []
+  const seen = new Set()
+  const add = (key) => {
+    if (seen.has(key) || !fieldMap[key]) return
+    seen.add(key)
+    keys.push(key)
+  }
+  for (const [key, status] of Object.entries(audit.fieldStatus || {})) if (status === "missing") add(key)
+  for (const field of fields) {
+    if (QUALITATIVE_GROUPS.has(field.group)) continue
+    if (["select", "checkbox"].includes(field.type)) continue
+    if (["terminalGrowth", "projectionYears"].includes(field.key)) continue
+    const status = audit.fieldStatus?.[field.key]
+    if (status && status !== "missing") continue
+    if (!fieldVisible(field, context)) continue
+    if (valueMissing(field.key, normalized[field.key], normalized)) add(field.key)
+  }
+  return keys.map((key) => fieldMap[key])
+}
+
+function renderNeedsAttention() {
+  const missingFields = unfilledInputFields()
   if (!missingFields.length) return ""
+  const groups = new Map()
+  for (const field of missingFields) {
+    const group = field.group || "Other"
+    if (!groups.has(group)) groups.set(group, [])
+    groups.get(group).push(field)
+  }
   return `
     <section class="panel needs-attention-panel">
       <div class="section-title">
         <div>
           <p class="eyebrow">Action needed</p>
-          <h2>${missingFields.length} Field${missingFields.length === 1 ? "" : "s"} Need Your Input</h2>
+          <h2>${missingFields.length} input${missingFields.length === 1 ? "" : "s"} could not be filled</h2>
         </div>
+        <button class="primary" data-tab="results">See results</button>
       </div>
-      <p class="muted">No connected source returned a value for these — enter them directly below. Everything else loaded automatically.</p>
-      <div class="field-grid">${missingFields.map(renderField).join("")}</div>
+      <p class="muted">Every value below is one no connected source could supply. Fill in what you know here - all at once - then open results. Anything left blank stays at zero and is treated as unknown by the engine.</p>
+      ${[...groups.entries()].map(([group, groupFields]) => `
+        <div class="needs-attention-group">
+          <h3>${escapeHtml(group)} <span class="muted">${groupFields.length}</span></h3>
+          <div class="field-grid">${groupFields.map(renderField).join("")}</div>
+        </div>
+      `).join("")}
+      <div class="intake-actions">
+        <button class="primary" data-tab="results">Run valuation with these inputs</button>
+      </div>
     </section>
   `
 }
@@ -4110,6 +4311,7 @@ function renderAutoIntake() {
           <div class="source-strip">
             ${(audit.providers || []).map((provider) => `<span class="pill">${escapeHtml(provider)}</span>`).join("")}
             <span class="muted">Financial period ${escapeHtml(audit.periodEnd || "unknown")}</span>
+            <span class="pill ${audit.periodBasis === "quarterly-annualized" ? "pill--warn" : ""}" title="Basis for revenue, margins, cash flows and other flow figures">${escapeHtml(periodBasisLabel(audit.periodBasis))}</span>
             ${crossChecks.length ? `<span class="muted">${matchedChecks}/${crossChecks.length} independent checks matched</span>` : ""}
           </div>
           ${(audit.warnings.length || audit.missing.length) ? `
@@ -4220,17 +4422,17 @@ function renderResults(result) {
         <div class="valuation-comparison">
           <div>
             <p class="eyebrow">Estimated fair value</p>
-            <h2>${money(result.outputs.fairCommonEquity)}</h2>
-            <p class="muted">Range ${money(result.bands.final.low)} - ${money(result.bands.final.high)}</p>
+            <h2>${moneyHtml(result.outputs.fairCommonEquity)}</h2>
+            <p class="muted">Range ${moneyHtml(result.bands.final.low)} - ${moneyHtml(result.bands.final.high)}</p>
           </div>
           <div class="market-value-block">
             <p class="eyebrow">Current market value</p>
-            <h3>${currentMarketValue > 0 ? money(currentMarketValue) : "Unavailable"}</h3>
-            ${averageDiffersMeaningfully ? `<p class="muted">${averageWindow}-day avg ${money(averageMarketValue)}</p>` : ""}
+            <h3>${currentMarketValue > 0 ? moneyHtml(currentMarketValue) : "Unavailable"}</h3>
+            ${averageDiffersMeaningfully ? `<p class="muted">${averageWindow}-day avg ${moneyHtml(averageMarketValue)}</p>` : ""}
           </div>
           <div class="difference-block ${valueDifference !== null && valueDifference < 0 ? "difference-block--negative" : ""}">
             <span>Implied vs current market</span>
-            <strong>${valueDifference === null ? "N/A" : `${valueDifference >= 0 ? "+" : ""}${pct(valueDifference, 1)}`}</strong>
+            <strong>${valueDifference === null ? "N/A" : `${valueDifference >= 0 ? "+" : ""}${pctHtml(valueDifference, 1)}`}</strong>
             <small>${valueDifference === null ? "Load market data to compare" : `(implied value - current market value) / current market value`}</small>
           </div>
         </div>
@@ -4239,9 +4441,9 @@ function renderResults(result) {
           <p class="muted">${escapeHtml(result.input.sector)} / ${escapeHtml(result.input.businessModel)}</p>
         </div>
         <div class="hero-metrics">
-          <div><span>Confidence</span><strong>${pct(result.bands.quality, 0)}</strong></div>
-          <div><span>Effective Growth</span><strong>${pct(result.growth.effectiveGrowth, 1)}</strong></div>
-          <div><span>Discount Rate</span><strong>${pct(result.discount.rate, 1)}</strong></div>
+          <div><span>Confidence</span><strong>${pctHtml(result.bands.quality, 0)}</strong></div>
+          <div><span>Effective Growth</span><strong>${pctHtml(result.growth.effectiveGrowth, 1)}</strong></div>
+          <div><span>Discount Rate</span><strong>${pctHtml(result.discount.rate, 1)}</strong></div>
         </div>
       </section>
 
@@ -4251,8 +4453,8 @@ function renderResults(result) {
           ${trackRows.map(([label, key, track]) => `
             <article class="track-card ${track?.active === false || !track?.rawEV ? "track-card--muted" : ""}">
               <span>${label}</span>
-              <strong>${money(track?.rawEV || 0)}</strong>
-              <small>Weight ${pct(result.final.trackWeights[key] || 0)} / confidence ${pct(track?.confidence || 0)}</small>
+              <strong>${moneyHtml(track?.rawEV || 0)}</strong>
+              <small>Weight ${pctHtml(result.final.trackWeights[key] || 0)} / confidence ${pctHtml(track?.confidence || 0)}</small>
             </article>
           `).join("")}
         </div>
@@ -4266,12 +4468,12 @@ function renderResults(result) {
         <div class="ledger-grid">
           <div class="budget-card">
             <span>Tag Budget</span>
-            <strong>${pct(result.ledger.budgets.tagBudgetMultiplier - 1, 1)}</strong>
+            <strong>${pctHtml(result.ledger.budgets.tagBudgetMultiplier - 1, 1)}</strong>
             <small>Positive overlap cannot become an uncapped premium.</small>
           </div>
           <div class="budget-card">
             <span>Quality Budget</span>
-            <strong>${pct(result.ledger.budgets.qualityBudget.market - 1, 1)}</strong>
+            <strong>${pctHtml(result.ledger.budgets.qualityBudget.market - 1, 1)}</strong>
             <small>Market quality adjustment after shared signal caps.</small>
           </div>
           <div class="signal-stack">
@@ -4292,47 +4494,47 @@ function renderResults(result) {
           <div><span>Peer EV / Revenue</span><strong>${(comparison.peer.evRevenue || 0).toFixed(2)}x</strong></div>
           <div><span>Peer EV / EBITDA</span><strong>${(comparison.peer.evEbitda || 0).toFixed(2)}x</strong></div>
           <div><span>Peer P/E</span><strong>${(comparison.peer.pe || 0).toFixed(2)}x</strong></div>
-          <div><span>Financial Justification</span><strong>${pct(result.ledger.signals.coreFinancialJustification.effective, 0)}</strong></div>
-          <div><span>Unsupported Premium</span><strong>${pct(result.ledger.signals.marketMultiplePressure.effective, 0)}</strong></div>
-          <div><span>Premium vs Peers</span><strong>${pct(comparison.multiplePremium || 0, 1)}</strong></div>
-          ${result.multiples.softwareDurabilityGate !== 1 ? `<div><span>Software Durability Gate</span><strong>${pct(result.multiples.softwareDurabilityGate - 1, 1)}</strong></div>` : ""}
-          ${result.multiples.marginQualityFactor !== 1 ? `<div><span>Margin Durability</span><strong>${pct(result.multiples.marginQualityFactor - 1, 1)}</strong></div>` : ""}
-          ${result.multiples.rdInvestmentFactor !== 1 ? `<div><span>R&D Investment Credit</span><strong>${pct(result.multiples.rdInvestmentFactor - 1, 1)}</strong></div>` : ""}
-          ${result.input.rdPct > 0 ? `<div><span>R&D % of Revenue vs Sector Norm</span><strong>${pct(result.input.rdPct, 1)} vs ${pct(result.multiples.sectorRdNorm, 1)}</strong></div>` : ""}
-          <div><span>Gross Margin</span><strong>${pct(result.margins.grossMargin, 1)}</strong></div>
-          ${result.margins.marginBlendActive ? `<div><span>Base Gross Margin</span><strong>${pct(result.margins.inputGrossMargin, 1)}</strong></div>` : ""}
-          ${result.margins.marginBlendActive ? `<div><span>Subscription Gross Contribution</span><strong>${pct(result.margins.subscriptionGrossContribution, 1)}</strong></div>` : ""}
-          <div><span>EBITDA Margin</span><strong>${pct(result.margins.ebitdaMargin, 1)}</strong></div>
-          <div><span>Net Margin</span><strong>${pct(result.margins.netMargin, 1)}</strong></div>
-          <div><span>FCF Margin</span><strong>${pct(result.margins.fcfMargin, 1)}</strong></div>
-          <div><span>DCF Margin Trend</span><strong>${pct(result.tracks.dcf.marginTrajectory?.appliedTrend || 0, 1)}</strong></div>
-          <div><span>Working Capital Drag</span><strong>${pct(result.margins.workingCapitalDrag, 1)}</strong></div>
-          ${result.margins.customerPrepaymentCredit > 0 ? `<div><span>Customer Prepayment Credit</span><strong>${pct(result.margins.customerPrepaymentCredit, 1)}</strong></div>` : ""}
-          <div><span>Growth Credibility</span><strong>${pct(result.growth.credibility, 0)}</strong></div>
-          <div><span>Market Potential</span><strong>${pct(result.ledger.signals.marketPotential.effective, 0)}</strong></div>
-          <div><span>Low Competition</span><strong>${pct(result.ledger.signals.lowDirectCompetition.effective, 0)}</strong></div>
-          <div><span>Moat Strength</span><strong>${pct(result.ledger.signals.moatStrength.effective, 0)}</strong></div>
-          <div><span>Brand Durability</span><strong>${pct(result.ledger.signals.brandDurability.effective, 0)}</strong></div>
-          <div><span>Durability (composite)</span><strong>${pct(result.ledger.signals.durability.effective, 0)}</strong></div>
-          <div><span>Brand Relevance</span><strong>${pct(result.context.brand.relevance, 0)}</strong></div>
-          <div><span>Pipeline Signal</span><strong>${pct(result.ledger.signals.pipelineOpportunity.effective, 0)}</strong></div>
-          <div><span>Pipeline Credit</span><strong>${money(result.tracks.market.paths.pipelineRevenueCredit)}</strong></div>
-          <div><span>Probability Layer</span><strong>${result.probability.active ? pct(result.probability.combined, 0) : "Inactive"}</strong></div>
-          <div><span>Net Debt</span><strong>${money(result.margins.netDebt)}</strong></div>
-          <div><span>Net Working Capital</span><strong>${money(result.margins.netWorkingCapital)}</strong></div>
-          <div><span>Market Share</span><strong>${result.context.size.marketKnown ? pct(result.context.size.marketShare, 2) : "N/A"}</strong></div>
-          <div><span>Market Size Score</span><strong>${result.context.size.marketKnown ? pct(result.context.size.marketSizeScore, 0) : "Neutral / unavailable"}</strong></div>
+          <div><span>Financial Justification</span><strong>${pctHtml(result.ledger.signals.coreFinancialJustification.effective, 0)}</strong></div>
+          <div><span>Unsupported Premium</span><strong>${pctHtml(result.ledger.signals.marketMultiplePressure.effective, 0)}</strong></div>
+          <div><span>Premium vs Peers</span><strong>${pctHtml(comparison.multiplePremium || 0, 1)}</strong></div>
+          ${result.multiples.softwareDurabilityGate !== 1 ? `<div><span>Software Durability Gate</span><strong>${pctHtml(result.multiples.softwareDurabilityGate - 1, 1)}</strong></div>` : ""}
+          ${result.multiples.marginQualityFactor !== 1 ? `<div><span>Margin Durability</span><strong>${pctHtml(result.multiples.marginQualityFactor - 1, 1)}</strong></div>` : ""}
+          ${result.multiples.rdInvestmentFactor !== 1 ? `<div><span>R&D Investment Credit</span><strong>${pctHtml(result.multiples.rdInvestmentFactor - 1, 1)}</strong></div>` : ""}
+          ${result.input.rdPct > 0 ? `<div><span>R&D % of Revenue vs Sector Norm</span><strong>${pctHtml(result.input.rdPct, 1)} vs ${pctHtml(result.multiples.sectorRdNorm, 1)}</strong></div>` : ""}
+          <div><span>Gross Margin</span><strong>${pctHtml(result.margins.grossMargin, 1)}</strong></div>
+          ${result.margins.marginBlendActive ? `<div><span>Base Gross Margin</span><strong>${pctHtml(result.margins.inputGrossMargin, 1)}</strong></div>` : ""}
+          ${result.margins.marginBlendActive ? `<div><span>Subscription Gross Contribution</span><strong>${pctHtml(result.margins.subscriptionGrossContribution, 1)}</strong></div>` : ""}
+          <div><span>EBITDA Margin</span><strong>${pctHtml(result.margins.ebitdaMargin, 1)}</strong></div>
+          <div><span>Net Margin</span><strong>${pctHtml(result.margins.netMargin, 1)}</strong></div>
+          <div><span>FCF Margin</span><strong>${pctHtml(result.margins.fcfMargin, 1)}</strong></div>
+          <div><span>DCF Margin Trend</span><strong>${pctHtml(result.tracks.dcf.marginTrajectory?.appliedTrend || 0, 1)}</strong></div>
+          <div><span>Working Capital Drag</span><strong>${pctHtml(result.margins.workingCapitalDrag, 1)}</strong></div>
+          ${result.margins.customerPrepaymentCredit > 0 ? `<div><span>Customer Prepayment Credit</span><strong>${pctHtml(result.margins.customerPrepaymentCredit, 1)}</strong></div>` : ""}
+          <div><span>Growth Credibility</span><strong>${pctHtml(result.growth.credibility, 0)}</strong></div>
+          <div><span>Market Potential</span><strong>${pctHtml(result.ledger.signals.marketPotential.effective, 0)}</strong></div>
+          <div><span>Low Competition</span><strong>${pctHtml(result.ledger.signals.lowDirectCompetition.effective, 0)}</strong></div>
+          <div><span>Moat Strength</span><strong>${pctHtml(result.ledger.signals.moatStrength.effective, 0)}</strong></div>
+          <div><span>Brand Durability</span><strong>${pctHtml(result.ledger.signals.brandDurability.effective, 0)}</strong></div>
+          <div><span>Durability (composite)</span><strong>${pctHtml(result.ledger.signals.durability.effective, 0)}</strong></div>
+          <div><span>Brand Relevance</span><strong>${pctHtml(result.context.brand.relevance, 0)}</strong></div>
+          <div><span>Pipeline Signal</span><strong>${pctHtml(result.ledger.signals.pipelineOpportunity.effective, 0)}</strong></div>
+          <div><span>Pipeline Credit</span><strong>${moneyHtml(result.tracks.market.paths.pipelineRevenueCredit)}</strong></div>
+          <div><span>Probability Layer</span><strong>${result.probability.active ? pctHtml(result.probability.combined, 0) : "Inactive"}</strong></div>
+          <div><span>Net Debt</span><strong>${moneyHtml(result.margins.netDebt)}</strong></div>
+          <div><span>Net Working Capital</span><strong>${moneyHtml(result.margins.netWorkingCapital)}</strong></div>
+          <div><span>Market Share</span><strong>${result.context.size.marketKnown ? pctHtml(result.context.size.marketShare, 2) : "N/A"}</strong></div>
+          <div><span>Market Size Score</span><strong>${result.context.size.marketKnown ? pctHtml(result.context.size.marketSizeScore, 0) : "Neutral / unavailable"}</strong></div>
           <div><span>Size Class</span><strong>${escapeHtml(result.context.size.className)}</strong></div>
-          <div><span>Observed Market Cap</span><strong>${money(result.tracks.market.paths.observedEquity)}</strong></div>
-          <div><span>Market Evidence Weight</span><strong>${pct(result.tracks.market.paths.publicEvidenceWeight, 0)}</strong></div>
-          <div><span>Calculated Asset Backing</span><strong>${money(result.tracks.asset.paths.calculatedAssetBacking || 0)}</strong></div>
-          <div><span>Asset Split Adjusted</span><strong>${money(result.tracks.asset.paths.assetSplit?.adjustedValue || 0)}</strong></div>
-          <div><span>Asset Liquidation Value</span><strong>${money(result.tracks.asset.paths.assetSplit?.liquidationValue || 0)}</strong></div>
+          <div><span>Observed Market Cap</span><strong>${moneyHtml(result.tracks.market.paths.observedEquity)}</strong></div>
+          <div><span>Market Evidence Weight</span><strong>${pctHtml(result.tracks.market.paths.publicEvidenceWeight, 0)}</strong></div>
+          <div><span>Calculated Asset Backing</span><strong>${moneyHtml(result.tracks.asset.paths.calculatedAssetBacking || 0)}</strong></div>
+          <div><span>Asset Split Adjusted</span><strong>${moneyHtml(result.tracks.asset.paths.assetSplit?.adjustedValue || 0)}</strong></div>
+          <div><span>Asset Liquidation Value</span><strong>${moneyHtml(result.tracks.asset.paths.assetSplit?.liquidationValue || 0)}</strong></div>
           ${(result.tracks.asset.paths.membershipMetrics?.recurringRevenue || 0) > 0 ? `<div><span>Membership Multiple</span><strong>${(result.tracks.asset.paths.membershipMetrics?.multiple || 0).toFixed(2)}x</strong></div>` : ""}
-          ${(result.tracks.asset.paths.membershipMetrics?.recurringRevenue || 0) > 0 ? `<div><span>Membership Flywheel</span><strong>${pct(result.tracks.asset.paths.membershipMetrics?.flywheel || 0, 0)}</strong></div>` : ""}
-          <div><span>Fair vs Market</span><strong>${result.marketComparison ? pct(result.marketComparison.premiumDiscount, 1) : "N/A"}</strong></div>
-          <div><span>Company Multiple Factor</span><strong>${pct(result.ledger.budgets.companyMultipleFactor - 1, 1)}</strong></div>
-          <div><span>Dividend Uplift</span><strong>${pct(result.outputs.equityBridge.dividendDurabilityUplift, 1)}</strong></div>
+          ${(result.tracks.asset.paths.membershipMetrics?.recurringRevenue || 0) > 0 ? `<div><span>Membership Flywheel</span><strong>${pctHtml(result.tracks.asset.paths.membershipMetrics?.flywheel || 0, 0)}</strong></div>` : ""}
+          <div><span>Fair vs Market</span><strong>${result.marketComparison ? pctHtml(result.marketComparison.premiumDiscount, 1) : "N/A"}</strong></div>
+          <div><span>Company Multiple Factor</span><strong>${pctHtml(result.ledger.budgets.companyMultipleFactor - 1, 1)}</strong></div>
+          <div><span>Dividend Uplift</span><strong>${pctHtml(result.outputs.equityBridge.dividendDurabilityUplift, 1)}</strong></div>
         </div>
       </section>
 
@@ -4385,9 +4587,9 @@ function renderAudit(result) {
             ${Object.entries(result.ledger.signals).map(([key, signal]) => `
               <tr>
                 <td>${signalLabel(key)}</td>
-                <td>${pct(signal.raw)}</td>
-                <td>${pct(signal.cap)}</td>
-                <td>${pct(signal.effective)}</td>
+                <td>${pctHtml(signal.raw)}</td>
+                <td>${pctHtml(signal.cap)}</td>
+                <td>${pctHtml(signal.effective)}</td>
                 <td>${signal.sources.join(", ")}</td>
               </tr>
             `).join("")}
@@ -4406,9 +4608,9 @@ function renderAudit(result) {
             ${trackRows.map(([label, key, track]) => `
               <tr>
                 <td>${label}</td>
-                <td>${money(track?.rawEV || 0)}</td>
-                <td>${pct(result.final.trackWeights[key] || 0)}</td>
-                <td>${pct(track?.confidence || 0)}</td>
+                <td>${moneyHtml(track?.rawEV || 0)}</td>
+                <td>${pctHtml(result.final.trackWeights[key] || 0)}</td>
+                <td>${pctHtml(track?.confidence || 0)}</td>
               </tr>
             `).join("")}
           </tbody>
@@ -4422,7 +4624,7 @@ function renderAudit(result) {
           ${budgetRows.map(([label, value, note]) => `
             <div>
               <span>${label}</span>
-              <strong>${pct(value, 1)}</strong>
+              <strong>${pctHtml(value, 1)}</strong>
               <small>${note}</small>
             </div>
           `).join("")}
@@ -4442,8 +4644,75 @@ const SCREENER_COLUMNS = [
   { key: "impliedVsMarketPct", label: "Implied vs Market" },
   { key: "confidence", label: "Confidence" },
   { key: "coveragePct", label: "Coverage" },
+  { key: "unfilledCount", label: "Unfilled" },
+  { key: "periodBasis", label: "Basis" },
   { key: "processedAt", label: "Updated" },
 ]
+const SCREENER_OVERRIDES_KEY = "eval-system-2-screener-overrides"
+const SCREENER_FORM_PAGE = 25
+
+function loadLocalScreenerOverrides() {
+  try {
+    return JSON.parse(localStorage.getItem(SCREENER_OVERRIDES_KEY) || "{}") || {}
+  } catch {
+    return {}
+  }
+}
+
+function saveLocalScreenerOverrides(overrides) {
+  try {
+    localStorage.setItem(SCREENER_OVERRIDES_KEY, JSON.stringify(overrides))
+  } catch {
+    // Browser storage is a convenience; the server copy (when available) is the durable one.
+  }
+}
+
+// Re-run the engine for one screener row with any manual fill-ins layered over the recorded
+// inputs, so the table reflects complete values without waiting for the next full screener run.
+function applyScreenerOverrides(row, overrides) {
+  const manual = overrides?.[row.ticker]
+  const baseInputs = row.inputs || {}
+  const merged = { ...baseInputs }
+  const filled = []
+  for (const [key, value] of Object.entries(manual || {})) {
+    if (key === "submittedAt" || !fieldMap[key]) continue
+    merged[key] = value
+    filled.push(key)
+  }
+  const missing = (row.missing || []).filter((key) => !filled.includes(key))
+  const originalMissing = (row.missing || []).length
+  const coverageFraction = (row.coveragePct || 0) / 100
+  const applicableCount = row.applicableCount || (originalMissing > 0 ? Math.round(originalMissing / Math.max(1 - coverageFraction, 1e-9)) : 0)
+  const updated = { ...row, missing, unfilledCount: missing.length, manualFilled: filled }
+  if (!filled.length) return updated
+  try {
+    const engineInputs = normalizeInputs({
+      ...DEFAULT_INPUTS,
+      companyName: row.companyName,
+      sector: row.sector,
+      businessModel: row.businessModel,
+      ...merged,
+    })
+    const result = computeValuation(engineInputs)
+    const fair = result.outputs.fairCommonEquity
+    const observed = row.observedMarketCap || 0
+    updated.fairCommonEquity = Math.round(fair * 100) / 100
+    updated.fairValueLow = Math.round(result.bands.final.low * 100) / 100
+    updated.fairValueHigh = Math.round(result.bands.final.high * 100) / 100
+    updated.impliedVsMarketPct = observed > 0 ? Math.round(((fair - observed) / observed) * 10_000) / 100 : row.impliedVsMarketPct
+    updated.confidence = result.bands.quality
+    const total = Math.max(applicableCount, originalMissing, 1)
+    updated.coveragePct = Math.round(((total - missing.length) / total) * 1000) / 10
+    updated.recomputedAt = new Date().toISOString()
+  } catch {
+    // A bad manual value must never take the row down; keep the recorded valuation.
+  }
+  return updated
+}
+
+function decorateScreenerRows(rows, overrides) {
+  return rows.map((row) => applyScreenerOverrides({ ...row, unfilledCount: (row.missing || []).length }, overrides))
+}
 
 async function loadScreener() {
   if (state.screenerLoading) return
@@ -4451,10 +4720,20 @@ async function loadScreener() {
   state.screenerError = ""
   render()
   try {
-    const response = await fetch("/api/screener")
-    const payload = await response.json()
-    if (!response.ok) throw new Error(payload.error || `Screener request failed (${response.status})`)
-    state.screenerResults = payload.results || []
+    let payload = null
+    try {
+      const response = await fetch("/api/screener")
+      payload = await response.json()
+      if (!response.ok) throw new Error(payload.error || `Screener request failed (${response.status})`)
+    } catch (apiError) {
+      // Static hosting has no API; fall back to the snapshot file shipped with the build.
+      const fallback = await fetch("screener-results.json")
+      if (!fallback.ok) throw apiError
+      payload = { results: await fallback.json(), meta: null, overrides: {} }
+    }
+    state.screenerOverrides = { ...(payload.overrides || {}), ...loadLocalScreenerOverrides() }
+    state.screenerRaw = payload.results || []
+    state.screenerResults = decorateScreenerRows(state.screenerRaw, state.screenerOverrides)
     state.screenerMeta = payload.meta || null
   } catch (error) {
     state.screenerError = error.message
@@ -4464,14 +4743,119 @@ async function loadScreener() {
   }
 }
 
+async function submitScreenerFill(ticker) {
+  const card = document.querySelector(`[data-screener-form="${ticker}"]`)
+  if (!card) return
+  const inputs = {}
+  card.querySelectorAll("[data-fill-field]").forEach((input) => {
+    const key = input.dataset.fillField
+    const field = fieldMap[key]
+    if (!field || input.value === "") return
+    const parsed = parseInputValue(input.value, field.type, input.checked)
+    if (typeof parsed === "number" && !Number.isFinite(parsed)) return
+    inputs[key] = parsed
+  })
+  if (!Object.keys(inputs).length) {
+    state.screenerFormStatus = `Nothing entered for ${ticker} - type a value in at least one box first.`
+    render()
+    return
+  }
+  const previous = state.screenerOverrides[ticker] || {}
+  state.screenerOverrides = { ...state.screenerOverrides, [ticker]: { ...previous, ...inputs, submittedAt: new Date().toISOString() } }
+  saveLocalScreenerOverrides(state.screenerOverrides)
+  state.screenerSubmitted = new Set([...(state.screenerSubmitted || []), ticker])
+  state.screenerResults = decorateScreenerRows(state.screenerRaw, state.screenerOverrides)
+  state.screenerFormStatus = `Saved ${Object.keys(inputs).length} value${Object.keys(inputs).length === 1 ? "" : "s"} for ${ticker}; its valuation has been recomputed.`
+  render()
+  try {
+    const response = await fetch("/api/screener/overrides", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ ticker, inputs }),
+    })
+    if (!response.ok) {
+      const payload = await response.json().catch(() => ({}))
+      if (response.status === 501) state.screenerFormStatus += " (Kept in this browser; this deployment has no server-side storage.)"
+      else state.screenerFormStatus += ` (Server did not persist it: ${payload.error || response.status}.)`
+      render()
+    }
+  } catch {
+    state.screenerFormStatus += " (Kept in this browser only - server unreachable.)"
+    render()
+  }
+}
+
+function screenerFillRows(sorted) {
+  const submitted = state.screenerSubmitted || new Set()
+  return sorted.filter((row) => row.unfilledCount > 0 && !submitted.has(row.ticker))
+}
+
+function renderScreenerFillForm(sorted) {
+  const candidates = screenerFillRows(sorted)
+  if (!candidates.length) return ""
+  const page = Math.max(1, state.screenerFormPage || 1)
+  const visible = candidates.slice(0, page * SCREENER_FORM_PAGE)
+  const totalUnfilled = candidates.reduce((sum, row) => sum + row.unfilledCount, 0)
+  return `
+    <section class="panel needs-attention-panel">
+      <div class="section-title">
+        <div>
+          <p class="eyebrow">Fill in what the sources could not</p>
+          <h2>${totalUnfilled.toLocaleString()} input${totalUnfilled === 1 ? "" : "s"} could not be filled across ${candidates.length.toLocaleString()} compan${candidates.length === 1 ? "y" : "ies"} in this view</h2>
+        </div>
+      </div>
+      <p class="muted">Each card is one company and the exact inputs no provider returned for it. Enter what you know and submit - the card disappears, the company's row is recomputed with the complete values, and your entries are kept for the next run. Narrow the search above to jump to specific companies.</p>
+      ${state.screenerFormStatus ? `<div class="status-line">${escapeHtml(state.screenerFormStatus)}</div>` : ""}
+      <div class="fill-grid">
+        ${visible.map((row) => `
+          <article class="fill-card" data-screener-form="${escapeHtml(row.ticker)}">
+            <header>
+              <strong>${escapeHtml(row.ticker)}</strong>
+              <span>${escapeHtml(row.companyName || "")}</span>
+              <small>${escapeHtml(row.sector || "")} / ${escapeHtml(periodBasisLabel(row.periodBasis))}</small>
+            </header>
+            <div class="fill-fields">
+              ${row.missing.map((key) => {
+                const field = fieldMap[key]
+                if (!field) return ""
+                const step = field.type === "money" ? "1000" : field.type === "number" ? "1" : "0.1"
+                return `
+                  <label class="field">
+                    <span>${escapeHtml(field.label)}${field.type === "percent" ? " (%)" : field.type === "money" ? " (USD)" : ""}</span>
+                    <input data-fill-field="${escapeHtml(key)}" type="number" step="${step}" placeholder="${field.type === "percent" ? "e.g. 12.5" : field.type === "money" ? "e.g. 250000000" : ""}" />
+                  </label>
+                `
+              }).join("")}
+            </div>
+            <div class="intake-actions">
+              <button class="primary" data-action="submit-screener-fill" data-ticker="${escapeHtml(row.ticker)}">Submit ${escapeHtml(row.ticker)}</button>
+            </div>
+          </article>
+        `).join("")}
+      </div>
+      ${candidates.length > visible.length ? `
+        <div class="intake-actions">
+          <button class="ghost" data-action="more-screener-forms">Show ${Math.min(SCREENER_FORM_PAGE, candidates.length - visible.length)} more companies (${candidates.length - visible.length} left in this view)</button>
+        </div>
+      ` : ""}
+    </section>
+  `
+}
+
+function basisTag(basis) {
+  if (basis === "ttm") return `<span class="pill" title="${escapeHtml(periodBasisLabel(basis))}">TTM</span>`
+  if (basis === "quarterly-annualized") return `<span class="pill pill--warn" title="${escapeHtml(periodBasisLabel(basis))}">Q x4</span>`
+  return `<span class="pill" title="Annual filing">Annual</span>`
+}
+
 function renderScreener() {
   if (state.screenerResults === null) {
     if (!state.screenerLoading) loadScreener()
     return `
       <div class="results-layout">
         <section class="panel">
-          <div class="section-title"><h2>Company Screener</h2></div>
-          <p class="muted">${state.screenerLoading ? "Loading screener results..." : state.screenerError || "No screener data yet."}</p>
+          <div class="section-title"><h2>All Companies</h2></div>
+          <p class="muted">${state.screenerLoading ? "Loading every recorded company..." : state.screenerError || "No screener data yet."}</p>
         </section>
       </div>
     `
@@ -4491,19 +4875,24 @@ function renderScreener() {
     return dir === "asc" ? av - bv : bv - av
   })
   const meta = state.screenerMeta
+  const filledCount = Object.keys(state.screenerOverrides || {}).length
   return `
     <div class="results-layout">
       <section class="panel">
         <div class="section-title">
-          <h2>Company Screener</h2>
+          <div>
+            <p class="eyebrow">Every public company, one table</p>
+            <h2>All Companies</h2>
+          </div>
           <button class="ghost" data-action="refresh-screener">${state.screenerLoading ? "Refreshing..." : "Refresh"}</button>
         </div>
         ${meta ? `
           <p class="muted">
-            ${meta.totalRecorded || 0} of ${meta.universeSize || 0} public companies recorded${meta.running ? " - background run in progress" : ""} - last updated ${meta.updatedAt ? new Date(meta.updatedAt).toLocaleString() : "n/a"}.
+            ${(meta.totalRecorded || 0).toLocaleString()} of ${(meta.universeSize || 0).toLocaleString()} SEC-registered companies recorded${meta.running ? " - background run in progress" : ""} - last run ${meta.updatedAt ? new Date(meta.updatedAt).toLocaleString() : "n/a"}${filledCount ? ` - ${filledCount} compan${filledCount === 1 ? "y" : "ies"} completed by hand` : ""}.
           </p>
         ` : state.screenerResults.length === 0 ? `<p class="muted">No screener results recorded yet. Run "node scripts/run-screener.mjs" to start populating this table.</p>` : ""}
-        <input data-screener-search type="text" placeholder="Search ticker, company, or sector" value="${escapeHtml(state.screenerSearch)}" />
+        <input data-screener-search type="text" placeholder="Filter by ticker, company, or sector" value="${escapeHtml(state.screenerSearch)}" />
+        <div class="table-scroll">
         <table>
           <thead>
             <tr>
@@ -4514,24 +4903,28 @@ function renderScreener() {
           </thead>
           <tbody>
             ${sorted.slice(0, 500).map((row) => `
-              <tr>
+              <tr class="${row.manualFilled?.length ? "row--manual" : ""}">
                 <td>${escapeHtml(row.ticker || "")}</td>
                 <td>${escapeHtml(row.companyName || "")}</td>
                 <td>${escapeHtml(row.sector || "")}</td>
-                <td>${money(row.currentPrice || 0)}</td>
-                <td>${money(row.observedMarketCap || 0)}</td>
-                <td>${money(row.fairCommonEquity || 0)}</td>
-                <td>${row.impliedVsMarketPct === null || row.impliedVsMarketPct === undefined ? "n/a" : `${row.impliedVsMarketPct.toFixed(1)}%`}</td>
-                <td>${pct(row.confidence || 0, 0)}</td>
+                <td>${moneyHtml(row.currentPrice || 0)}</td>
+                <td>${moneyHtml(row.observedMarketCap || 0)}</td>
+                <td>${moneyHtml(row.fairCommonEquity || 0)}</td>
+                <td>${row.impliedVsMarketPct === null || row.impliedVsMarketPct === undefined ? "n/a" : signedHtml(`${row.impliedVsMarketPct.toFixed(1)}%`, row.impliedVsMarketPct)}</td>
+                <td>${pctHtml(row.confidence || 0, 0)}</td>
                 <td>${row.coveragePct === null || row.coveragePct === undefined ? "n/a" : `${row.coveragePct.toFixed(0)}%`}</td>
-                <td>${row.processedAt ? new Date(row.processedAt).toLocaleDateString() : ""}</td>
+                <td>${row.unfilledCount ? `<span class="pill pill--warn">${row.unfilledCount}</span>` : row.manualFilled?.length ? `<span class="pill">filled</span>` : "0"}</td>
+                <td>${basisTag(row.periodBasis)}</td>
+                <td>${row.processedAt ? new Date(row.recomputedAt || row.processedAt).toLocaleDateString() : ""}</td>
               </tr>
             `).join("")}
           </tbody>
         </table>
-        ${sorted.length > 500 ? `<p class="muted">Showing 500 of ${sorted.length} matching companies - narrow your search to see more.</p>` : ""}
+        </div>
+        ${sorted.length > 500 ? `<p class="muted">Showing 500 of ${sorted.length.toLocaleString()} matching companies - narrow the filter to see the rest.</p>` : ""}
         ${sorted.length === 0 && state.screenerResults.length > 0 ? `<p class="muted">No companies match "${escapeHtml(state.screenerSearch)}".</p>` : ""}
       </section>
+      ${renderScreenerFillForm(sorted)}
     </div>
   `
 }
@@ -4549,7 +4942,7 @@ function render() {
         <button data-tab="inputs" class="${state.activeTab === "inputs" ? "active" : ""}">Inputs</button>
         <button data-tab="results" class="${state.activeTab === "results" ? "active" : ""}">Results</button>
         <button data-tab="audit" class="${state.activeTab === "audit" ? "active" : ""}">Audit</button>
-        <button data-tab="screener" class="${state.activeTab === "screener" ? "active" : ""}">Screener</button>
+        <button data-tab="screener" class="${state.activeTab === "screener" ? "active" : ""}">All Companies</button>
       </nav>
       <button class="ghost ghost--sidebar" data-action="reset-draft">Reset Draft</button>
       <div class="fixture-list">
@@ -4565,6 +4958,7 @@ function render() {
         </div>
         <div class="topbar-actions">
           <button class="ghost" data-action="toggle-review-all">${state.reviewAllFields ? "Close All Fields" : "Review All Fields"}</button>
+          <button class="ghost ghost--accent" data-tab="screener">Browse All Companies</button>
           <button class="primary" data-tab="results">Run Valuation</button>
         </div>
       </header>
@@ -4588,6 +4982,7 @@ document.addEventListener("input", (event) => {
   }
   if (event.target.dataset.screenerSearch !== undefined) {
     state.screenerSearch = event.target.value
+    state.screenerFormPage = 1
     render()
     const input = document.querySelector("[data-screener-search]")
     if (input) {
@@ -4666,6 +5061,7 @@ async function ingestCompany() {
       warnings: payload.warnings || [],
       missing: payload.missing || [],
       periodEnd: payload.periodEnd,
+      periodBasis: payload.periodBasis || "annual",
       provenance: payload.provenance || [],
       fieldStatus: payload.fieldStatus || {},
       crossChecks: payload.crossChecks || [],
@@ -4703,7 +5099,15 @@ document.addEventListener("click", async (event) => {
     render()
   }
   if (action === "refresh-screener") {
+    state.screenerSubmitted = new Set()
     loadScreener()
+  }
+  if (action === "submit-screener-fill") {
+    submitScreenerFill(target.dataset.ticker)
+  }
+  if (action === "more-screener-forms") {
+    state.screenerFormPage = (state.screenerFormPage || 1) + 1
+    render()
   }
   if (step !== undefined) {
     state.step = Number(step)
