@@ -6,15 +6,15 @@ const FLOW_TAGS = {
   revenue: ["RevenueFromContractWithCustomerExcludingAssessedTax", "SalesRevenueNet", "Revenues", "RevenuesNetOfInterestExpense", "RevenueFromContractWithCustomerIncludingAssessedTax", "Revenue"],
   grossProfit: ["GrossProfit"],
   costOfRevenue: ["CostOfGoodsAndServicesSold", "CostOfRevenue", "CostOfGoodsSold", "CostOfGoodsAndServiceExcludingDepreciationDepletionAndAmortization"],
-  operatingIncome: ["OperatingIncomeLoss"],
+  operatingIncome: ["OperatingIncomeLoss", "ProfitLossFromOperatingActivities"],
   operatingExpenses: ["OperatingExpenses"],
   sellingGeneralAdministrative: ["SellingGeneralAndAdministrativeExpense"],
   otherOperatingExpense: ["OtherOperatingIncomeExpenseNet", "OtherOperatingExpense"],
-  depreciationAmortization: ["DepreciationDepletionAndAmortization", "DepreciationAmortizationAndAccretionNet", "DepreciationAndAmortization"],
-  netIncome: ["NetIncomeLoss", "ProfitLoss"],
-  capex: ["PaymentsToAcquirePropertyPlantAndEquipment", "PaymentsToAcquireOtherPropertyPlantAndEquipment", "PaymentsToAcquireProductiveAssets", "CapitalExpenditures"],
-  researchDevelopment: ["ResearchAndDevelopmentExpense", "ResearchAndDevelopmentExpenseExcludingAcquiredInProcessCost"],
-  operatingCashFlow: ["NetCashProvidedByUsedInOperatingActivities"],
+  depreciationAmortization: ["DepreciationDepletionAndAmortization", "DepreciationAmortizationAndAccretionNet", "DepreciationAndAmortization", "DepreciationAmortisationAndImpairmentLossReversalOfImpairmentLossRecognisedInProfitOrLoss", "DepreciationAndAmortisationExpense"],
+  netIncome: ["NetIncomeLoss", "ProfitLoss", "ProfitLossAttributableToOwnersOfParent"],
+  capex: ["PaymentsToAcquirePropertyPlantAndEquipment", "PaymentsToAcquireOtherPropertyPlantAndEquipment", "PaymentsToAcquireProductiveAssets", "CapitalExpenditures", "PurchaseOfPropertyPlantAndEquipmentClassifiedAsInvestingActivities"],
+  researchDevelopment: ["ResearchAndDevelopmentExpense", "ResearchAndDevelopmentExpenseExcludingAcquiredInProcessCost", "ResearchAndDevelopmentExpenseSoftwareExcludingAcquiredInProcessCost"],
+  operatingCashFlow: ["NetCashProvidedByUsedInOperatingActivities", "NetCashProvidedByUsedInOperatingActivitiesContinuingOperations", "CashFlowsFromUsedInOperatingActivities"],
   dividendsPaid: [
     "PaymentsOfDividendsCommonStock", "PaymentsOfDividends", "PaymentsOfOrdinaryDividends", "DividendsCommonStockCash",
     "DividendsCash", "DividendsCommonStock", "DividendsPaidClassifiedAsFinancingActivities", "DividendsPaid",
@@ -29,7 +29,7 @@ const FLOW_TAGS = {
 }
 
 const INSTANT_TAGS = {
-  cash: ["CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents", "CashAndCashEquivalentsAtCarryingValue"],
+  cash: ["CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents", "CashAndCashEquivalentsAtCarryingValue", "CashAndCashEquivalents", "Cash"],
   shortTermInvestments: ["ShortTermInvestments", "MarketableSecuritiesCurrent"],
   // Debt is assembled from non-overlapping buckets so a filer that tags both a total and its
   // pieces is never double-counted: a combined total wins outright; otherwise the noncurrent
@@ -44,17 +44,17 @@ const INSTANT_TAGS = {
   liabilitiesCurrent: ["LiabilitiesCurrent", "CurrentLiabilities"],
   financeLeaseCurrent: ["FinanceLeaseLiabilityCurrent"],
   financeLeaseLongTerm: ["FinanceLeaseLiabilityNoncurrent"],
-  inventory: ["InventoryNet", "InventoryFinishedGoodsNetOfReserves"],
-  ar: ["AccountsReceivableNetCurrent", "AccountsReceivableNet"],
-  ap: ["AccountsPayableCurrent", "AccountsPayable"],
+  inventory: ["InventoryNet", "InventoryFinishedGoodsNetOfReserves", "Inventories"],
+  ar: ["AccountsReceivableNetCurrent", "AccountsReceivableNet", "TradeAndOtherCurrentReceivables", "CurrentTradeReceivables"],
+  ap: ["AccountsPayableCurrent", "AccountsPayable", "TradeAndOtherCurrentPayables", "TradeAndOtherCurrentPayablesToTradeSuppliers"],
   assets: ["Assets"],
   liabilities: ["Liabilities"],
-  equity: ["StockholdersEquity", "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest"],
+  equity: ["StockholdersEquity", "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest", "EquityAttributableToOwnersOfParent", "Equity"],
   goodwill: ["Goodwill"],
-  intangibles: ["FiniteLivedIntangibleAssetsNet", "IndefiniteLivedIntangibleAssetsExcludingGoodwill", "IntangibleAssetsNetExcludingGoodwill"],
-  propertyPlantEquipment: ["PropertyPlantAndEquipmentNet"],
+  intangibles: ["FiniteLivedIntangibleAssetsNet", "IndefiniteLivedIntangibleAssetsExcludingGoodwill", "IntangibleAssetsNetExcludingGoodwill", "IntangibleAssetsOtherThanGoodwill"],
+  propertyPlantEquipment: ["PropertyPlantAndEquipmentNet", "PropertyPlantAndEquipment"],
   land: ["Land"],
-  sharesOutstanding: ["EntityCommonStockSharesOutstanding", "CommonStockSharesOutstanding"],
+  sharesOutstanding: ["EntityCommonStockSharesOutstanding", "CommonStockSharesOutstanding", "NumberOfSharesOutstanding"],
 }
 
 const ENGINE_FINANCIAL_FIELDS = [

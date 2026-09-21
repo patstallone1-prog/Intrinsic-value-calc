@@ -1,105 +1,105 @@
 {
-  "generatedAt": "2026-09-20T21:22:52.497Z",
+  "generatedAt": "2026-09-21T04:44:31.681Z",
   "universeSize": 9895,
-  "succeeded": 8746,
-  "failed": 1149,
+  "succeeded": 8739,
+  "failed": 1156,
   "failureCategoryCounts": {
-    "Foreign ADR / OTC Ordinary": 962,
+    "Foreign ADR / OTC Ordinary": 963,
     "Foreign Mining / Resources": 7,
-    "Other / Unresolved": 108,
+    "Other / Unresolved": 114,
     "Closed-End Fund / Trust": 61,
     "Community Bank Holding Co.": 10,
     "SPAC": 1
   },
   "missingFieldSample": {
-    "sampleSize": 400,
-    "note": "Sample skewed toward the lowest-coverage third of successfully-ingested companies, so rates run higher than the full-population average; ranking and relative gaps are the useful signal.",
+    "sampleSize": 8739,
+    "note": "Measured across every successfully priced company in the latest full run (not a sample).",
     "topMissingFields": [
       {
         "field": "buybackYield",
-        "count": 373,
-        "pct": 93
-      },
-      {
-        "field": "dividendYield",
-        "count": 369,
-        "pct": 92
-      },
-      {
-        "field": "eps",
-        "count": 332,
-        "pct": 83
+        "count": 2891,
+        "pct": 33
       },
       {
         "field": "rotce",
-        "count": 327,
-        "pct": 82
-      },
-      {
-        "field": "debt",
-        "count": 324,
-        "pct": 81
-      },
-      {
-        "field": "revenueGrowth",
-        "count": 311,
-        "pct": 78
-      },
-      {
-        "field": "revenue",
-        "count": 310,
-        "pct": 78
-      },
-      {
-        "field": "marginChangeYoy",
-        "count": 306,
-        "pct": 77
+        "count": 2699,
+        "pct": 31
       },
       {
         "field": "capexPct",
-        "count": 305,
-        "pct": 76
+        "count": 2434,
+        "pct": 28
+      },
+      {
+        "field": "marginChangeYoy",
+        "count": 2373,
+        "pct": 27
+      },
+      {
+        "field": "revenueGrowth",
+        "count": 2258,
+        "pct": 26
       },
       {
         "field": "grossMargin",
-        "count": 304,
-        "pct": 76
+        "count": 2150,
+        "pct": 25
       },
       {
-        "field": "tangibleBookValue",
-        "count": 299,
-        "pct": 75
+        "field": "revenue",
+        "count": 1902,
+        "pct": 22
+      },
+      {
+        "field": "eps",
+        "count": 1838,
+        "pct": 21
       },
       {
         "field": "opexRatio",
-        "count": 299,
-        "pct": 75
+        "count": 1705,
+        "pct": 20
+      },
+      {
+        "field": "dividendYield",
+        "count": 1572,
+        "pct": 18
       },
       {
         "field": "roe",
-        "count": 294,
-        "pct": 74
-      },
-      {
-        "field": "cash",
-        "count": 288,
-        "pct": 72
-      },
-      {
-        "field": "assetBackingValue",
-        "count": 286,
-        "pct": 72
+        "count": 1237,
+        "pct": 14
       },
       {
         "field": "sharesOutstanding",
-        "count": 286,
-        "pct": 72
+        "count": 1217,
+        "pct": 14
+      },
+      {
+        "field": "inventory",
+        "count": 1026,
+        "pct": 12
+      },
+      {
+        "field": "debt",
+        "count": 799,
+        "pct": 9
+      },
+      {
+        "field": "tangibleBookValue",
+        "count": 776,
+        "pct": 9
+      },
+      {
+        "field": "rdPct",
+        "count": 658,
+        "pct": 8
       }
     ]
   },
   "rootCause": {
-    "alphaVantageConfigured": false,
-    "fmpConfigured": false,
-    "note": "ALPHA_VANTAGE_API_KEY and FMP_API_KEY are unset in this environment, so two of the five ingestion providers never run; only SEC EDGAR, Yahoo Finance, and Nasdaq are active. This is the largest single driver of missing fields on companies that lack clean SEC XBRL tagging."
+    "alphaVantageConfigured": true,
+    "fmpConfigured": true,
+    "note": "Both supplement keys are now configured, but the Alpha Vantage key is a free tier capped at 25 requests/day (about 12 tickers) and FMP at 250/day (about 40 tickers of backfill per run), so the bulk of the universe is still priced from SEC EDGAR, Yahoo Finance, and Nasdaq. The largest remaining gaps are on issuers that do not file US-GAAP XBRL."
   }
 }
