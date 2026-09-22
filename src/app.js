@@ -1,4 +1,4 @@
-import { DEFAULT_INPUTS, FIXTURES, TAXONOMY, computeValuation, deriveContext, impliedValueDifference, normalizeInputs } from "./valuationEngine.js"
+import { AUTOMATED_BASE_INPUTS, DEFAULT_INPUTS, FIXTURES, TAXONOMY, computeValuation, deriveContext, impliedValueDifference, normalizeInputs } from "./valuationEngine.js"
 
 const DRAFT_KEY = "eval-system-2-draft"
 const DRAFT_META_KEY = "eval-system-2-ingestion"
@@ -1027,7 +1027,7 @@ function applyScreenerOverrides(row, overrides) {
   if (!filled.length) return updated
   try {
     const engineInputs = normalizeInputs({
-      ...DEFAULT_INPUTS,
+      ...AUTOMATED_BASE_INPUTS,
       companyName: row.companyName,
       sector: row.sector,
       businessModel: row.businessModel,

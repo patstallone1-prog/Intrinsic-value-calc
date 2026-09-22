@@ -1,0 +1,839 @@
+{
+  "generatedAt": "2026-09-22T01:15:53.210Z",
+  "fields": [
+    "debt",
+    "cash",
+    "tangibleBookValue",
+    "assetBackingValue"
+  ],
+  "groups": {
+    "Industrial / Robotics / Automation::Product / Hardware": {
+      "debt": {
+        "median": 0.024887,
+        "count": 184
+      },
+      "cash": {
+        "median": 0.102927,
+        "count": 187
+      },
+      "tangibleBookValue": {
+        "median": 0.115174,
+        "count": 189
+      },
+      "assetBackingValue": {
+        "median": 0.231404,
+        "count": 189
+      }
+    },
+    "sector::Industrial / Robotics / Automation": {
+      "debt": {
+        "median": 0.024887,
+        "count": 184
+      },
+      "cash": {
+        "median": 0.102927,
+        "count": 187
+      },
+      "tangibleBookValue": {
+        "median": 0.115174,
+        "count": 189
+      },
+      "assetBackingValue": {
+        "median": 0.231404,
+        "count": 189
+      }
+    },
+    "model::Product / Hardware": {
+      "debt": {
+        "median": 0.059694,
+        "count": 302
+      },
+      "cash": {
+        "median": 0.091,
+        "count": 309
+      },
+      "tangibleBookValue": {
+        "median": 0.097403,
+        "count": 302
+      },
+      "assetBackingValue": {
+        "median": 0.287785,
+        "count": 308
+      }
+    },
+    "all": {
+      "debt": {
+        "median": 0.100094,
+        "count": 5737
+      },
+      "cash": {
+        "median": 0.112801,
+        "count": 6011
+      },
+      "tangibleBookValue": {
+        "median": 0.197597,
+        "count": 5669
+      },
+      "assetBackingValue": {
+        "median": 0.400352,
+        "count": 5976
+      }
+    },
+    "SaaS / Enterprise Software::Software / Subscription": {
+      "debt": {
+        "median": 0.025205,
+        "count": 535
+      },
+      "cash": {
+        "median": 0.110909,
+        "count": 554
+      },
+      "tangibleBookValue": {
+        "median": 0.053865,
+        "count": 533
+      },
+      "assetBackingValue": {
+        "median": 0.250882,
+        "count": 549
+      }
+    },
+    "sector::SaaS / Enterprise Software": {
+      "debt": {
+        "median": 0.025281,
+        "count": 536
+      },
+      "cash": {
+        "median": 0.111457,
+        "count": 555
+      },
+      "tangibleBookValue": {
+        "median": 0.053665,
+        "count": 534
+      },
+      "assetBackingValue": {
+        "median": 0.248394,
+        "count": 550
+      }
+    },
+    "model::Software / Subscription": {
+      "debt": {
+        "median": 0.025205,
+        "count": 535
+      },
+      "cash": {
+        "median": 0.110909,
+        "count": 554
+      },
+      "tangibleBookValue": {
+        "median": 0.053865,
+        "count": 533
+      },
+      "assetBackingValue": {
+        "median": 0.250882,
+        "count": 549
+      }
+    },
+    "Consumer Products / Retail / E-commerce::Retail / Commerce / Distribution": {
+      "debt": {
+        "median": 0.162822,
+        "count": 369
+      },
+      "cash": {
+        "median": 0.087969,
+        "count": 388
+      },
+      "tangibleBookValue": {
+        "median": 0.150632,
+        "count": 372
+      },
+      "assetBackingValue": {
+        "median": 0.357612,
+        "count": 381
+      }
+    },
+    "sector::Consumer Products / Retail / E-commerce": {
+      "debt": {
+        "median": 0.162822,
+        "count": 369
+      },
+      "cash": {
+        "median": 0.087969,
+        "count": 388
+      },
+      "tangibleBookValue": {
+        "median": 0.150632,
+        "count": 372
+      },
+      "assetBackingValue": {
+        "median": 0.357612,
+        "count": 381
+      }
+    },
+    "model::Retail / Commerce / Distribution": {
+      "debt": {
+        "median": 0.162822,
+        "count": 369
+      },
+      "cash": {
+        "median": 0.087969,
+        "count": 388
+      },
+      "tangibleBookValue": {
+        "median": 0.150632,
+        "count": 372
+      },
+      "assetBackingValue": {
+        "median": 0.357612,
+        "count": 381
+      }
+    },
+    "Manufacturing / Industrials::Manufacturing / Production": {
+      "debt": {
+        "median": 0.129822,
+        "count": 349
+      },
+      "cash": {
+        "median": 0.072329,
+        "count": 360
+      },
+      "tangibleBookValue": {
+        "median": 0.136249,
+        "count": 341
+      },
+      "assetBackingValue": {
+        "median": 0.365738,
+        "count": 359
+      }
+    },
+    "sector::Manufacturing / Industrials": {
+      "debt": {
+        "median": 0.129822,
+        "count": 349
+      },
+      "cash": {
+        "median": 0.072329,
+        "count": 360
+      },
+      "tangibleBookValue": {
+        "median": 0.136249,
+        "count": 341
+      },
+      "assetBackingValue": {
+        "median": 0.365738,
+        "count": 359
+      }
+    },
+    "model::Manufacturing / Production": {
+      "debt": {
+        "median": 0.099141,
+        "count": 700
+      },
+      "cash": {
+        "median": 0.067007,
+        "count": 729
+      },
+      "tangibleBookValue": {
+        "median": 0.158268,
+        "count": 669
+      },
+      "assetBackingValue": {
+        "median": 0.322045,
+        "count": 727
+      }
+    },
+    "Biotech Therapeutics::Biopharma / R&D Asset": {
+      "debt": {
+        "median": 0.005887,
+        "count": 724
+      },
+      "cash": {
+        "median": 0.215645,
+        "count": 797
+      },
+      "tangibleBookValue": {
+        "median": 0.171073,
+        "count": 754
+      },
+      "assetBackingValue": {
+        "median": 0.251801,
+        "count": 790
+      }
+    },
+    "sector::Biotech Therapeutics": {
+      "debt": {
+        "median": 0.005887,
+        "count": 724
+      },
+      "cash": {
+        "median": 0.215645,
+        "count": 797
+      },
+      "tangibleBookValue": {
+        "median": 0.171073,
+        "count": 754
+      },
+      "assetBackingValue": {
+        "median": 0.251801,
+        "count": 790
+      }
+    },
+    "model::Biopharma / R&D Asset": {
+      "debt": {
+        "median": 0.005887,
+        "count": 724
+      },
+      "cash": {
+        "median": 0.215645,
+        "count": 797
+      },
+      "tangibleBookValue": {
+        "median": 0.171073,
+        "count": 754
+      },
+      "assetBackingValue": {
+        "median": 0.251801,
+        "count": 790
+      }
+    },
+    "Fintech / Financial Services::Financial / Balance-Sheet Business": {
+      "debt": {
+        "median": 0.157019,
+        "count": 825
+      },
+      "cash": {
+        "median": 0.211924,
+        "count": 854
+      },
+      "tangibleBookValue": {
+        "median": 0.602181,
+        "count": 789
+      },
+      "assetBackingValue": {
+        "median": 0.729326,
+        "count": 866
+      }
+    },
+    "sector::Fintech / Financial Services": {
+      "debt": {
+        "median": 0.157019,
+        "count": 825
+      },
+      "cash": {
+        "median": 0.211924,
+        "count": 854
+      },
+      "tangibleBookValue": {
+        "median": 0.602181,
+        "count": 789
+      },
+      "assetBackingValue": {
+        "median": 0.729326,
+        "count": 866
+      }
+    },
+    "model::Financial / Balance-Sheet Business": {
+      "debt": {
+        "median": 0.157019,
+        "count": 825
+      },
+      "cash": {
+        "median": 0.211924,
+        "count": 854
+      },
+      "tangibleBookValue": {
+        "median": 0.602181,
+        "count": 789
+      },
+      "assetBackingValue": {
+        "median": 0.729326,
+        "count": 866
+      }
+    },
+    "Other::Other": {
+      "debt": {
+        "median": 0.097665,
+        "count": 901
+      },
+      "cash": {
+        "median": 0.093439,
+        "count": 945
+      },
+      "tangibleBookValue": {
+        "median": 0.054107,
+        "count": 904
+      },
+      "assetBackingValue": {
+        "median": 0.306309,
+        "count": 930
+      }
+    },
+    "sector::Other": {
+      "debt": {
+        "median": 0.105094,
+        "count": 976
+      },
+      "cash": {
+        "median": 0.096839,
+        "count": 1023
+      },
+      "tangibleBookValue": {
+        "median": 0.059477,
+        "count": 972
+      },
+      "assetBackingValue": {
+        "median": 0.314995,
+        "count": 1008
+      }
+    },
+    "model::Other": {
+      "debt": {
+        "median": 0.097665,
+        "count": 901
+      },
+      "cash": {
+        "median": 0.093439,
+        "count": 945
+      },
+      "tangibleBookValue": {
+        "median": 0.054107,
+        "count": 904
+      },
+      "assetBackingValue": {
+        "median": 0.306309,
+        "count": 930
+      }
+    },
+    "Agriculture / Food / Bioeconomy::Product / Hardware": {
+      "debt": {
+        "median": 0.238912,
+        "count": 118
+      },
+      "cash": {
+        "median": 0.073985,
+        "count": 122
+      },
+      "tangibleBookValue": {
+        "median": 0.06767,
+        "count": 113
+      },
+      "assetBackingValue": {
+        "median": 0.402867,
+        "count": 119
+      }
+    },
+    "sector::Agriculture / Food / Bioeconomy": {
+      "debt": {
+        "median": 0.238912,
+        "count": 118
+      },
+      "cash": {
+        "median": 0.073985,
+        "count": 122
+      },
+      "tangibleBookValue": {
+        "median": 0.06767,
+        "count": 113
+      },
+      "assetBackingValue": {
+        "median": 0.402867,
+        "count": 119
+      }
+    },
+    "Real Estate / Construction / PropTech::Asset-Heavy Operator": {
+      "debt": {
+        "median": 0.4377,
+        "count": 349
+      },
+      "cash": {
+        "median": 0.094869,
+        "count": 358
+      },
+      "tangibleBookValue": {
+        "median": 0.537363,
+        "count": 349
+      },
+      "assetBackingValue": {
+        "median": 0.745649,
+        "count": 356
+      }
+    },
+    "sector::Real Estate / Construction / PropTech": {
+      "debt": {
+        "median": 0.4377,
+        "count": 349
+      },
+      "cash": {
+        "median": 0.094869,
+        "count": 358
+      },
+      "tangibleBookValue": {
+        "median": 0.537363,
+        "count": 349
+      },
+      "assetBackingValue": {
+        "median": 0.745649,
+        "count": 356
+      }
+    },
+    "model::Asset-Heavy Operator": {
+      "debt": {
+        "median": 0.322668,
+        "count": 1001
+      },
+      "cash": {
+        "median": 0.075991,
+        "count": 1033
+      },
+      "tangibleBookValue": {
+        "median": 0.406576,
+        "count": 953
+      },
+      "assetBackingValue": {
+        "median": 0.558123,
+        "count": 1023
+      }
+    },
+    "Medical Devices::Tools / Devices / Equipment": {
+      "debt": {
+        "median": 0.061668,
+        "count": 309
+      },
+      "cash": {
+        "median": 0.110067,
+        "count": 328
+      },
+      "tangibleBookValue": {
+        "median": 0.098942,
+        "count": 324
+      },
+      "assetBackingValue": {
+        "median": 0.269458,
+        "count": 328
+      }
+    },
+    "sector::Medical Devices": {
+      "debt": {
+        "median": 0.061668,
+        "count": 309
+      },
+      "cash": {
+        "median": 0.110067,
+        "count": 328
+      },
+      "tangibleBookValue": {
+        "median": 0.098942,
+        "count": 324
+      },
+      "assetBackingValue": {
+        "median": 0.269458,
+        "count": 328
+      }
+    },
+    "model::Tools / Devices / Equipment": {
+      "debt": {
+        "median": 0.061668,
+        "count": 309
+      },
+      "cash": {
+        "median": 0.110067,
+        "count": 328
+      },
+      "tangibleBookValue": {
+        "median": 0.098942,
+        "count": 324
+      },
+      "assetBackingValue": {
+        "median": 0.269458,
+        "count": 328
+      }
+    },
+    "Clean Energy / Climate::Asset-Heavy Operator": {
+      "debt": {
+        "median": 0.262661,
+        "count": 418
+      },
+      "cash": {
+        "median": 0.044489,
+        "count": 430
+      },
+      "tangibleBookValue": {
+        "median": 0.336234,
+        "count": 379
+      },
+      "assetBackingValue": {
+        "median": 0.473076,
+        "count": 426
+      }
+    },
+    "sector::Clean Energy / Climate": {
+      "debt": {
+        "median": 0.262661,
+        "count": 418
+      },
+      "cash": {
+        "median": 0.044489,
+        "count": 430
+      },
+      "tangibleBookValue": {
+        "median": 0.336234,
+        "count": 379
+      },
+      "assetBackingValue": {
+        "median": 0.473076,
+        "count": 426
+      }
+    },
+    "Aerospace / Space / Defense::Manufacturing / Production": {
+      "debt": {
+        "median": 0.054821,
+        "count": 59
+      },
+      "cash": {
+        "median": 0.048682,
+        "count": 60
+      },
+      "tangibleBookValue": {
+        "median": 0.054462,
+        "count": 59
+      },
+      "assetBackingValue": {
+        "median": 0.21527,
+        "count": 60
+      }
+    },
+    "sector::Aerospace / Space / Defense": {
+      "debt": {
+        "median": 0.054821,
+        "count": 59
+      },
+      "cash": {
+        "median": 0.048682,
+        "count": 60
+      },
+      "tangibleBookValue": {
+        "median": 0.054462,
+        "count": 59
+      },
+      "assetBackingValue": {
+        "median": 0.21527,
+        "count": 60
+      }
+    },
+    "Advanced Materials / Chemicals::Manufacturing / Production": {
+      "debt": {
+        "median": 0.073179,
+        "count": 292
+      },
+      "cash": {
+        "median": 0.062409,
+        "count": 309
+      },
+      "tangibleBookValue": {
+        "median": 0.209787,
+        "count": 269
+      },
+      "assetBackingValue": {
+        "median": 0.297633,
+        "count": 308
+      }
+    },
+    "sector::Advanced Materials / Chemicals": {
+      "debt": {
+        "median": 0.073179,
+        "count": 292
+      },
+      "cash": {
+        "median": 0.062409,
+        "count": 309
+      },
+      "tangibleBookValue": {
+        "median": 0.209787,
+        "count": 269
+      },
+      "assetBackingValue": {
+        "median": 0.297633,
+        "count": 308
+      }
+    },
+    "Other::Asset-Heavy Operator": {
+      "debt": {
+        "median": 0.219224,
+        "count": 75
+      },
+      "cash": {
+        "median": 0.134378,
+        "count": 78
+      },
+      "tangibleBookValue": {
+        "median": 0.165361,
+        "count": 68
+      },
+      "assetBackingValue": {
+        "median": 0.481881,
+        "count": 78
+      }
+    },
+    "Consumer Internet / Media / Gaming::Marketplace / Network Platform": {
+      "debt": {
+        "median": 0.159016,
+        "count": 46
+      },
+      "cash": {
+        "median": 0.119928,
+        "count": 49
+      },
+      "tangibleBookValue": {
+        "median": 0.011647,
+        "count": 45
+      },
+      "assetBackingValue": {
+        "median": 0.179314,
+        "count": 50
+      }
+    },
+    "sector::Consumer Internet / Media / Gaming": {
+      "debt": {
+        "median": 0.159016,
+        "count": 46
+      },
+      "cash": {
+        "median": 0.119928,
+        "count": 49
+      },
+      "tangibleBookValue": {
+        "median": 0.011647,
+        "count": 45
+      },
+      "assetBackingValue": {
+        "median": 0.179314,
+        "count": 50
+      }
+    },
+    "model::Marketplace / Network Platform": {
+      "debt": {
+        "median": 0.159016,
+        "count": 46
+      },
+      "cash": {
+        "median": 0.119928,
+        "count": 49
+      },
+      "tangibleBookValue": {
+        "median": 0.011647,
+        "count": 45
+      },
+      "assetBackingValue": {
+        "median": 0.179314,
+        "count": 50
+      }
+    },
+    "Logistics / Supply Chain::Asset-Heavy Operator": {
+      "debt": {
+        "median": 0.31076,
+        "count": 158
+      },
+      "cash": {
+        "median": 0.161854,
+        "count": 166
+      },
+      "tangibleBookValue": {
+        "median": 0.399039,
+        "count": 156
+      },
+      "assetBackingValue": {
+        "median": 0.55236,
+        "count": 162
+      }
+    },
+    "sector::Logistics / Supply Chain": {
+      "debt": {
+        "median": 0.31076,
+        "count": 158
+      },
+      "cash": {
+        "median": 0.161854,
+        "count": 166
+      },
+      "tangibleBookValue": {
+        "median": 0.399039,
+        "count": 156
+      },
+      "assetBackingValue": {
+        "median": 0.55236,
+        "count": 162
+      }
+    },
+    "Healthcare Services::Services / Labor-Based": {
+      "debt": {
+        "median": 0.042467,
+        "count": 25
+      },
+      "cash": {
+        "median": 0.058077,
+        "count": 25
+      },
+      "tangibleBookValue": {
+        "median": 0.064905,
+        "count": 24
+      },
+      "assetBackingValue": {
+        "median": 0.273981,
+        "count": 24
+      }
+    },
+    "sector::Healthcare Services": {
+      "debt": {
+        "median": 0.042467,
+        "count": 25
+      },
+      "cash": {
+        "median": 0.058077,
+        "count": 25
+      },
+      "tangibleBookValue": {
+        "median": 0.064905,
+        "count": 24
+      },
+      "assetBackingValue": {
+        "median": 0.273981,
+        "count": 24
+      }
+    },
+    "model::Services / Labor-Based": {
+      "debt": {
+        "median": 0.042467,
+        "count": 25
+      },
+      "cash": {
+        "median": 0.058077,
+        "count": 25
+      },
+      "tangibleBookValue": {
+        "median": 0.064905,
+        "count": 24
+      },
+      "assetBackingValue": {
+        "median": 0.273981,
+        "count": 24
+      }
+    },
+    "SaaS / Enterprise Software::Asset-Heavy Operator": {
+      "debt": {
+        "median": 1.652822,
+        "count": 1
+      },
+      "cash": {
+        "median": 0.17511,
+        "count": 1
+      },
+      "tangibleBookValue": {
+        "median": 0,
+        "count": 1
+      },
+      "assetBackingValue": {
+        "median": 0,
+        "count": 1
+      }
+    }
+  }
+}

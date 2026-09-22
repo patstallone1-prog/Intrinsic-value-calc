@@ -11,7 +11,7 @@ import fs from "node:fs/promises"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { applicableFinancialFields, peerRatio } from "../src/financialIngestion.js"
-import { DEFAULT_INPUTS, computeValuation, normalizeInputs } from "../src/valuationEngine.js"
+import { AUTOMATED_BASE_INPUTS, computeValuation, normalizeInputs } from "../src/valuationEngine.js"
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)))
 const resultsPath = path.join(root, "data/screener-results.jsonl")
@@ -70,7 +70,7 @@ const out = rows.map((row) => {
   }
   if (!Object.keys(estimated).length) return row
   touched += 1
-  const result = computeValuation(normalizeInputs({ ...DEFAULT_INPUTS, companyName: row.companyName, sector: row.sector, businessModel: row.businessModel, ...inputs }))
+  const result = computeValuation(normalizeInputs({ ...AUTOMATED_BASE_INPUTS, companyName: row.companyName, sector: row.sector, businessModel: row.businessModel, ...inputs }))
   const fair = result.outputs.fairCommonEquity
   const total = Math.max(row.applicableCount || 0, (row.missing || []).length, 1)
   return {

@@ -65,6 +65,9 @@ const ENGINE_FINANCIAL_FIELDS = [
 
 const SIC_RULES = [
   [/telecommunication|telephone|wireless|cable & other pay|radiotelephone/i, ["Other", "Asset-Heavy Operator"]],
+  // Distributors and retailers of technology are commerce businesses, not software makers -
+  // this rule must precede the software rule so "Wholesale-Computers ... & Software" lands here.
+  [/wholesale|retail|grocery|department store|catalog|e-commerce/i, ["Consumer Products / Retail / E-commerce", "Retail / Commerce / Distribution"]],
   [/internet|online|social media|streaming|broadcast|video game|interactive entertainment/i, ["Consumer Internet / Media / Gaming", "Marketplace / Network Platform"]],
   [/software|prepackaged|data processing|data preparation|computer processing|computer programming|information retrieval|edp services|computer integrated systems|information technology/i, ["SaaS / Enterprise Software", "Software / Subscription"]],
   [/semiconductor|electronic component|computer peripheral|electronic computer|communications equipment/i, ["Industrial / Robotics / Automation", "Product / Hardware"]],

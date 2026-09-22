@@ -60,7 +60,7 @@ function decorate(row) {
   const out = { ...row, missing, unfilledCount: missing.length, estimatedCount: estimatedKeys.length, manualFilled: filled }
   if (filled.length && typeof computeValuation === "function") {
     try {
-      const result = computeValuation(normalizeInputs({ ...DEFAULT_INPUTS, companyName: row.companyName, sector: row.sector, businessModel: row.businessModel, ...merged }))
+      const result = computeValuation(normalizeInputs({ ...AUTOMATED_BASE_INPUTS, companyName: row.companyName, sector: row.sector, businessModel: row.businessModel, ...merged }))
       const fair = result.outputs.fairCommonEquity
       const observed = row.observedMarketCap || 0
       out.fairCommonEquity = fair

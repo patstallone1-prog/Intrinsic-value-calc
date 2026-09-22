@@ -1,13 +1,13 @@
 {
-  "startedAt": "2026-09-21T03:58:29.360Z",
-  "updatedAt": "2026-09-21T04:43:49.100Z",
-  "universeSize": 9895,
-  "totalRecorded": 8739,
-  "processedThisRun": 9895,
-  "succeededThisRun": 8739,
-  "failedThisRun": 1156,
+  "startedAt": "2026-09-22T00:39:23.584Z",
+  "updatedAt": "2026-09-22T01:10:50.470Z",
+  "universeSize": 7312,
+  "totalRecorded": 6456,
+  "processedThisRun": 7312,
+  "succeededThisRun": 6456,
+  "failedThisRun": 856,
   "remaining": 0,
   "fmpTicketsUsed": 40,
-  "alphaVantageTicketsUsed": 0,
+  "alphaVantageTicketsUsed": 1,
   "running": false
 }

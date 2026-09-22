@@ -24,7 +24,7 @@ import fs from "node:fs/promises"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { ENGINE_FINANCIAL_FIELDS, ingestTicker } from "../src/financialIngestion.js"
-import { DEFAULT_INPUTS, computeValuation, normalizeInputs } from "../src/valuationEngine.js"
+import { AUTOMATED_BASE_INPUTS, computeValuation, normalizeInputs } from "../src/valuationEngine.js"
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)))
 const dataDir = path.join(root, "data")
@@ -140,7 +140,7 @@ async function ingestAndValue(ticker) {
     alphaVantageThrottled = true
     console.log(`  Alpha Vantage daily quota reached after ${alphaVantageTicketsUsed} tickers; skipping it for the remainder of this run.`)
   }
-  const inputs = normalizeInputs({ ...DEFAULT_INPUTS, ...ingestion.inputs })
+  const inputs = normalizeInputs({ ...AUTOMATED_BASE_INPUTS, ...ingestion.inputs })
   const result = computeValuation(inputs)
   return { normalized: ingestion, marketSnapshot: ingestion.marketSnapshot, result, providers: ingestion.providers }
 }
