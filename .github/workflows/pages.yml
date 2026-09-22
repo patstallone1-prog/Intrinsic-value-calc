@@ -29,8 +29,9 @@ jobs:
       - run: npm run build
       - name: Stage static site
         run: |
-          mkdir -p site
+          mkdir -p site/screener
           cp dist/index.html dist/screener-results.json dist/robots.txt dist/.nojekyll site/
+          cp dist/screener/index.html site/screener/
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

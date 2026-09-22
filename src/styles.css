@@ -898,3 +898,10 @@ th {
   width: 100%;
   margin-bottom: 10px;
 }
+
+.ghost--link {
+  display: block;
+  text-align: center;
+  text-decoration: none;
+  margin-bottom: 10px;
+}

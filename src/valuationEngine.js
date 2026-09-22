@@ -2328,7 +2328,10 @@ function confidenceBands(input, context, margins, growth, probability, ledger, o
 }
 
 function equityBridge(ev, input, margins, ledger) {
-  const equity = ev - (input.debt - input.cash)
+  // A balance-sheet business's cash and borrowings are operating items (deposits, central-bank
+  // balances, funding), not a net-debt bridge - its tracks already produce equity-like values.
+  const netDebt = input.businessModel === "Financial / Balance-Sheet Business" ? 0 : input.debt - input.cash
+  const equity = ev - netDebt
   const buybackUplift = input.capitalStatus === "Public" && input.buybackYield > 0 && margins.fcfMargin > 0
     ? Math.min(input.buybackYield * 3, 0.18)
     : 0

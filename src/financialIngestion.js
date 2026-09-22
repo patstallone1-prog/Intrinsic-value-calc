@@ -64,6 +64,7 @@ const ENGINE_FINANCIAL_FIELDS = [
 ]
 
 const SIC_RULES = [
+  [/telecommunication|telephone|wireless|cable & other pay|radiotelephone/i, ["Other", "Asset-Heavy Operator"]],
   [/internet|online|social media|streaming|broadcast|video game|interactive entertainment/i, ["Consumer Internet / Media / Gaming", "Marketplace / Network Platform"]],
   [/software|prepackaged|data processing|data preparation|computer processing|computer programming|information retrieval|edp services|computer integrated systems|information technology/i, ["SaaS / Enterprise Software", "Software / Subscription"]],
   [/semiconductor|electronic component|computer peripheral|electronic computer|communications equipment/i, ["Industrial / Robotics / Automation", "Product / Hardware"]],
@@ -307,7 +308,7 @@ export function normalizeSecCompany({ company, submissions = {}, facts = {}, tod
 
   const grossReported = flow("grossProfit")
   const cost = flow("costOfRevenue")
-  const grossProfit = grossReported.value || (revenue > 0 && cost.value > 0 ? revenue - cost.value : 0)
+  const grossProfitReported = grossReported.value || (revenue > 0 && cost.value > 0 ? revenue - cost.value : 0)
   const priorGrossReported = flow("grossProfit", priorPeriodEnd)
   const priorCost = flow("costOfRevenue", priorPeriodEnd)
   const priorGrossProfit = priorGrossReported.value || (priorRevenue > 0 && priorCost.value > 0 ? priorRevenue - priorCost.value : 0)
@@ -316,6 +317,14 @@ export function normalizeSecCompany({ company, submissions = {}, facts = {}, tod
   const sellingGeneralAdministrative = flow("sellingGeneralAdministrative")
   const otherOperatingExpense = flow("otherOperatingExpense")
   const da = flow("depreciationAmortization")
+  // Issuers that report no gross-profit line (telecoms, cable, many services) still report
+  // operating income. Folding all costs into cost of revenue - gross margin = EBITDA margin,
+  // opex = 0 - keeps the engine's profitability exactly right; the alternative (a supplement's
+  // gross margin with opex left at zero) valued cable companies as 70%-EBITDA businesses.
+  const grossProfitMissing = !grossReported.row && !cost.row
+  const grossProfit = grossProfitMissing && operatingIncome.row
+    ? operatingIncome.value + Math.abs(da.value)
+    : grossProfitReported
   const netIncome = flow("netIncome")
   const capex = flow("capex")
   const rd = flow("researchDevelopment")
@@ -397,7 +406,7 @@ export function normalizeSecCompany({ company, submissions = {}, facts = {}, tod
     ar: round(ar.value, 2),
     ap: round(ap.value, 2),
     tangibleBookValue: round(tangibleBook, 2),
-    assetBackingValue: round(Math.max(equity.value, assets.value - liabilities.value, 0), 2),
+    assetBackingValue: round(Math.max(equity.value, assets.row && liabilities.row ? assets.value - liabilities.value : 0, 0), 2),
     roe: averageEquity > 0 ? round(netIncome.value / averageEquity) : 0,
     rotce: averageTangibleEquity > 0 ? round(netIncome.value / averageTangibleEquity) : 0,
     sharesOutstanding: round(shares.value, 2),
@@ -426,6 +435,7 @@ export function normalizeSecCompany({ company, submissions = {}, facts = {}, tod
   if (priorRevenue > 0) availableFields.add("revenueGrowth")
   if (grossReported.row || cost.row) availableFields.add("grossMargin")
   if ((priorGrossReported.row || priorCost.row) && (grossReported.row || cost.row)) availableFields.add("marginChangeYoy")
+  if (grossProfitMissing && operatingIncome.row) availableFields.add("grossMargin")
   if (operatingIncome.row || operatingExpenses.row || sellingGeneralAdministrative.row) availableFields.add("opexRatio")
   if (rd.row) availableFields.add("rdPct")
   if (cash.row || shortTermInvestments.row) availableFields.add("cash")
@@ -446,6 +456,10 @@ export function normalizeSecCompany({ company, submissions = {}, facts = {}, tod
     field,
     `SEC Company Facts; ${inputs[field] === 0 ? "measured zero" : "normalized value"} from ${periodBasisLabel(periodBasis)} ending ${periodEnd || "latest"}`,
   ]))
+  if (grossProfitMissing && operatingIncome.row) {
+    sourceNotes.grossMargin = `SEC Company Facts; no gross-profit line is reported, so gross margin is the EBITDA margin with operating costs folded into cost of revenue (${periodBasisLabel(periodBasis)} ending ${periodEnd || "latest"})`
+    sourceNotes.opexRatio = "SEC Company Facts; measured zero - operating costs are folded into cost of revenue because no gross-profit line is reported"
+  }
   if (epsDerived) sourceNotes.eps = `SEC Company Facts; derived as net income / shares outstanding (EPS is reported per share class only) for ${periodBasisLabel(periodBasis)} ending ${periodEnd || "latest"}`
   const periodStale = periodBasis === "annual" && Boolean(annualEnd) && annualStale
   const basisWarnings = periodBasis === "ttm"
@@ -556,10 +570,17 @@ export function normalizeNasdaqCompany({ ticker, financials = {}, info = {}, sum
   const totalCash = cash === null && shortTermInvestments === null ? null : (cash || 0) + (shortTermInvestments || 0)
   const debt = debtCurrent === null && debtLongTerm === null ? null : Math.max(debtCurrent || 0, 0) + Math.max(debtLongTerm || 0, 0)
   const revenueGrowth = revenue !== null && priorRevenue > 0 ? (revenue - priorRevenue) / priorRevenue : null
-  const grossMargin = revenue > 0 && grossProfit !== null ? grossProfit / revenue : null
-  const priorGrossMargin = priorRevenue > 0 && priorGrossProfit !== null ? priorGrossProfit / priorRevenue : null
+  // Nasdaq's table repeats revenue as "Gross Profit" when an issuer reports no cost of revenue
+  // line (telecoms, some banks); a 97%+ gross margin from this feed is that artifact, not a
+  // measurement, and would otherwise flow straight into a 100%-margin valuation.
+  const rawGrossMargin = revenue > 0 && grossProfit !== null ? grossProfit / revenue : null
+  const grossMargin = rawGrossMargin !== null && rawGrossMargin < 0.97 ? rawGrossMargin : null
+  const rawPriorGrossMargin = priorRevenue > 0 && priorGrossProfit !== null ? priorGrossProfit / priorRevenue : null
+  const priorGrossMargin = rawPriorGrossMargin !== null && rawPriorGrossMargin < 0.97 ? rawPriorGrossMargin : null
   const marginChangeYoy = grossMargin !== null && priorGrossMargin !== null ? grossMargin - priorGrossMargin : null
-  const ebitda = operatingIncome !== null && depreciationAmortization !== null ? operatingIncome + Math.abs(depreciationAmortization) : null
+  // Missing D&A shouldn't erase operating expenses entirely: EBITDA collapses to operating
+  // income (slightly overstating opex) rather than leaving the ratio unmeasured.
+  const ebitda = operatingIncome !== null ? operatingIncome + Math.abs(depreciationAmortization || 0) : null
   const freeCashFlow = operatingCashFlow !== null && capex !== null ? operatingCashFlow - Math.abs(capex) : null
   const classification = classifyCompany(`${summaryData?.summaryData?.Sector?.value || ""} ${summaryData?.summaryData?.Industry?.value || ""}`)
   const lifecycle = lifecycleFromFinancials(revenueGrowth || 0, netIncome || 0, freeCashFlow || 0)
@@ -580,7 +601,7 @@ export function normalizeNasdaqCompany({ ticker, financials = {}, info = {}, sum
   setMeasured("revenueGrowth", revenueGrowth)
   setMeasured("grossMargin", grossMargin)
   setMeasured("marginChangeYoy", marginChangeYoy)
-  setMeasured("opexRatio", revenue > 0 && grossProfit !== null && ebitda !== null ? Math.max((grossProfit - ebitda) / revenue, 0) : null)
+  setMeasured("opexRatio", revenue > 0 && grossMargin !== null && ebitda !== null ? Math.max((grossProfit - ebitda) / revenue, 0) : null)
   setMeasured("rdPct", revenue > 0 && rd !== null ? Math.abs(rd) / revenue : null)
   setMeasured("cash", totalCash)
   setMeasured("debt", debt)

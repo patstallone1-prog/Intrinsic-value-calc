@@ -1356,6 +1356,7 @@ function render() {
         <button data-tab="screener" class="${state.activeTab === "screener" ? "active" : ""}">Screened Companies</button>
       </nav>
       <button class="primary primary--sidebar" data-tab="screener">Browse ${state.screenerResults ? state.screenerResults.length.toLocaleString() : "all"} screened companies</button>
+      <a class="ghost ghost--sidebar ghost--link" href="screener/">Open the standalone screener site</a>
       <button class="ghost ghost--sidebar" data-action="reset-draft">Reset Draft</button>
       <div class="fixture-list">
         <span>Scenarios</span>

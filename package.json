@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "node scripts/build-static.mjs && node scripts/build-worker.mjs",
+    "build": "node scripts/build-static.mjs && node scripts/build-worker.mjs && node scripts/build-screener.mjs",
     "start": "node scripts/server.mjs",
     "test": "node tests/valuationEngine.test.js && node tests/financialIngestion.test.js",
     "anthropic:audit3": "node scripts/anthropic-three-company-audit.mjs",
