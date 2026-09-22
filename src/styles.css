@@ -905,3 +905,51 @@ th {
   text-decoration: none;
   margin-bottom: 10px;
 }
+
+.field-source--estimated {
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.needs-attention-panel--soft {
+  border-color: var(--line-strong);
+  background: var(--panel-2);
+}
+
+.needs-attention-panel--soft .eyebrow,
+.needs-attention-panel--soft h2 {
+  color: var(--accent);
+}
+
+.nav-group {
+  display: block;
+  margin: 10px 0 4px;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.nav-group:first-child {
+  margin-top: 0;
+}
+
+.sidebar .nav-link {
+  display: block;
+  padding: 10px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.04);
+  color: #edf3fb;
+  text-decoration: none;
+  font-size: 14px;
+}
+
+.sidebar .nav-link:hover {
+  border-color: #6fa8d8;
+  color: #ffffff;
+}
+
+.sidebar .nav-group {
+  color: #aebbd0;
+}

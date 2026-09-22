@@ -56,7 +56,8 @@ function decorate(row) {
   const filled = []
   for (const [k, v] of Object.entries(manual)) { if (k !== "submittedAt" && FIELD_LABELS[k]) { merged[k] = v; filled.push(k) } }
   const missing = (row.missing || []).filter((k) => !filled.includes(k))
-  const out = { ...row, missing, unfilledCount: missing.length, manualFilled: filled }
+  const estimatedKeys = Object.keys(row.estimated || {}).filter((k) => !filled.includes(k))
+  const out = { ...row, missing, unfilledCount: missing.length, estimatedCount: estimatedKeys.length, manualFilled: filled }
   if (filled.length && typeof computeValuation === "function") {
     try {
       const result = computeValuation(normalizeInputs({ ...DEFAULT_INPUTS, companyName: row.companyName, sector: row.sector, businessModel: row.businessModel, ...merged }))
@@ -73,7 +74,7 @@ function decorate(row) {
   }
   const observed = out.observedMarketCap || 0, fair = out.fairCommonEquity || 0
   const ratio = observed > 0 && fair > 0 ? fair / observed : 1
-  out.suspect = observed <= 0 || ratio > 8 || ratio < 1 / 8
+  out.suspect = observed <= 0 || ratio > 5 || ratio < 0.2
   out.inRange = out.fairValueLow <= observed && observed <= out.fairValueHigh
   return out
 }
@@ -148,7 +149,7 @@ function render() {
     <label class="field"><span>Market vs fair range</span><select data-f="inRange"><option value="">Any</option><option value="in" ${f.inRange === "in" ? "selected" : ""}>Trading inside fair range</option><option value="out" ${f.inRange === "out" ? "selected" : ""}>Outside fair range</option></select></label>
     <label class="field"><span>Period basis</span><select data-f="basis"><option value="">Any</option><option value="annual" ${f.basis === "annual" ? "selected" : ""}>Annual filing</option><option value="ttm" ${f.basis === "ttm" ? "selected" : ""}>Trailing twelve months</option></select></label>
     <label class="check"><input type="checkbox" data-f="onlyComplete" ${f.onlyComplete ? "checked" : ""} /> Only fully filled companies</label>
-    <label class="check"><input type="checkbox" data-f="hideSuspect" ${f.hideSuspect ? "checked" : ""} /> Hide likely data errors (&gt;8x off market)</label>
+    <label class="check"><input type="checkbox" data-f="hideSuspect" ${f.hideSuspect ? "checked" : ""} /> Hide likely data errors (&gt;5x off market)</label>
     <div class="chips"><button class="ghost" data-reset>Reset</button><button class="ghost" data-export>Export CSV (${rows.length.toLocaleString()})</button></div>
   `
 
@@ -162,7 +163,7 @@ function render() {
     <div class="table-scroll"><table><thead><tr>${cols.map(([k, l, c]) => `<th class="${c || ""} ${state.sortField === k ? "active" : ""}" data-col="${k}">${l}${state.sortField === k ? (state.sortDir === "asc" ? " ^" : " v") : ""}</th>`).join("")}</tr></thead>
     <tbody>${slice.length ? slice.map((r) => `
       <tr data-ticker="${esc(r.ticker)}">
-        <td class="tk">${esc(r.ticker)}${r.suspect ? ' <span class="tag warn" title="Fair value more than 8x off market - probably a share-count, ADR-ratio or currency mismatch">check</span>' : ""}</td>
+        <td class="tk">${esc(r.ticker)}${r.suspect ? ' <span class="tag warn" title="Fair value more than 5x off market - probably a share-count, ADR-ratio or currency mismatch">check</span>' : ""}</td>
         <td class="name" title="${esc(r.companyName)}">${esc(r.companyName)}</td>
         <td>${esc(r.sector)}</td>
         <td class="num">${money(r.currentPrice)}</td>
@@ -201,15 +202,21 @@ function openDrawer(ticker) {
       <dt>Share price</dt><dd>${money(r.currentPrice)}</dd>
       <dt>Shares outstanding</dt><dd>${Number(r.sharesOutstanding || 0).toLocaleString()}</dd>
     </dl>
-    ${r.suspect ? `<p class="note" style="color:var(--warn)">Flagged: fair value is more than 8x away from market value. This usually means a share-count, ADR-ratio or currency mismatch in the inputs rather than a real mispricing - check the figures below before relying on it.</p>` : ""}
+    ${r.suspect ? `<p class="note" style="color:var(--warn)">Flagged: fair value is more than 5x away from market value. This usually means a share-count, ADR-ratio or currency mismatch in the inputs rather than a real mispricing - check the figures below before relying on it.</p>` : ""}
     <h3>Inputs used</h3>
-    <dl class="kv">${Object.entries(inputs).filter(([k]) => FIELD_LABELS[k]).map(([k, v]) => `<dt>${FIELD_LABELS[k][0]}${(state.overrides[ticker] || {})[k] !== undefined ? ' <span class="tag ok">yours</span>' : ""}</dt><dd class="${typeof v === "number" && v < 0 ? "neg" : ""}">${fmt(k, v)}</dd>`).join("")}</dl>
-    <h3>${r.unfilledCount ? `${r.unfilledCount} input${r.unfilledCount === 1 ? "" : "s"} no source could fill` : "Every applicable input is filled"}</h3>
-    ${r.unfilledCount ? `
-      <p class="note">Enter what you know (money in USD, percentages as e.g. 12.5) and save - the valuation is recomputed here in the browser and your entries stay in this browser.</p>
-      <div class="fill">${r.missing.map((k) => `<label class="field"><span>${FIELD_LABELS[k]?.[0] || k}${FIELD_LABELS[k]?.[1] === "percent" ? " %" : FIELD_LABELS[k]?.[1] === "money" ? " $" : ""}</span><input type="number" step="any" data-fill="${k}" /></label>`).join("")}</div>
-      <div class="chips" style="margin-top:10px"><button class="primary" data-save="${esc(ticker)}">Save and recompute</button>${r.manualFilled?.length ? `<button class="ghost" data-clear="${esc(ticker)}">Clear my fill-ins</button>` : ""}</div>
-      <div class="status" id="fill-status"></div>` : r.manualFilled?.length ? `<div class="chips"><button class="ghost" data-clear="${esc(ticker)}">Clear my fill-ins</button></div>` : ""}
+    <dl class="kv">${Object.entries(inputs).filter(([k]) => FIELD_LABELS[k]).map(([k, v]) => `<dt>${FIELD_LABELS[k][0]}${(state.overrides[ticker] || {})[k] !== undefined ? ' <span class="tag ok">yours</span>' : r.estimated?.[k] ? ` <span class="tag warn" title="No source reported this; industry median of ${(r.estimated[k].ratio * 100).toFixed(1)}% of market value across ${r.estimated[k].peers} ${r.estimated[k].basis} peers, scaled to this company">est.</span>` : ""}</dt><dd class="${typeof v === "number" && v < 0 ? "neg" : ""}">${fmt(k, v)}</dd>`).join("")}</dl>
+    ${r.estimatedCount ? `<p class="note">${r.estimatedCount} balance-sheet input${r.estimatedCount === 1 ? " is" : "s are"} industry-peer estimates (marked est.) because no source reported them. Override below if you know the figure.</p>` : ""}
+    ${(() => {
+      const est = Object.keys(r.estimated || {}).filter((k) => (state.overrides[ticker] || {})[k] === undefined)
+      const fillable = [...r.missing, ...est]
+      const heading = r.unfilledCount ? `${r.unfilledCount} input${r.unfilledCount === 1 ? "" : "s"} no source could fill` : est.length ? "Override the estimates if you know the figures" : "Every applicable input is filled"
+      const form = fillable.length ? `
+        <p class="note">Enter what you know (money in USD, percentages as e.g. 12.5) and save - the valuation is recomputed here in the browser and your entries stay in this browser.</p>
+        <div class="fill">${fillable.map((k) => `<label class="field"><span>${FIELD_LABELS[k]?.[0] || k}${FIELD_LABELS[k]?.[1] === "percent" ? " %" : FIELD_LABELS[k]?.[1] === "money" ? " $" : ""}${r.estimated?.[k] ? " (est.)" : ""}</span><input type="number" step="any" data-fill="${k}" placeholder="${r.estimated?.[k] ? esc(fmt(k, r.estimated[k].value)) : ""}" /></label>`).join("")}</div>
+        <div class="chips" style="margin-top:10px"><button class="primary" data-save="${esc(ticker)}">Save and recompute</button>${r.manualFilled?.length ? `<button class="ghost" data-clear="${esc(ticker)}">Clear my fill-ins</button>` : ""}</div>
+        <div class="status" id="fill-status"></div>` : r.manualFilled?.length ? `<div class="chips"><button class="ghost" data-clear="${esc(ticker)}">Clear my fill-ins</button></div>` : ""
+      return `<h3>${heading}</h3>${form}`
+    })()}
   `
   $("#drawer").classList.add("open")
 }

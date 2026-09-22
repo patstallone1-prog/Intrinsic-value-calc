@@ -31,6 +31,7 @@ jobs:
         run: |
           mkdir -p site/screener
           cp dist/index.html dist/screener-results.json dist/robots.txt dist/.nojekyll site/
+          cp dist/failed-companies.json site/ 2>/dev/null || true
           cp dist/screener/index.html site/screener/
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3

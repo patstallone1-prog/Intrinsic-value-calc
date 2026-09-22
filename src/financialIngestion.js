@@ -693,7 +693,25 @@ export function normalizeMarketSeries(seriesByProvider, sharesOutstanding = 0) {
   }
 }
 
-export function finalizeNormalizedInputs(secNormalized, marketSnapshot, supplements = []) {
+const IMPUTABLE_FIELDS = ["debt", "cash", "tangibleBookValue", "assetBackingValue"]
+
+// Median field/market-cap ratio for the closest peer group with enough members:
+// sector + business model, then sector, then business model, then the whole universe.
+export function peerRatio(sectorRatios, field, sector, businessModel) {
+  const groups = [
+    [`${sector}::${businessModel}`, "sector and business-model"],
+    [`sector::${sector}`, "sector"],
+    [`model::${businessModel}`, "business-model"],
+    ["all", "market-wide"],
+  ]
+  for (const [key, basis] of groups) {
+    const entry = sectorRatios?.[key]?.[field]
+    if (entry && entry.count >= 8 && Number.isFinite(entry.median)) return { value: entry.median, basis, peers: entry.count }
+  }
+  return null
+}
+
+export function finalizeNormalizedInputs(secNormalized, marketSnapshot, supplements = [], sectorRatios = null) {
   const inputs = { ...secNormalized.inputs }
   const sourceNotes = { ...secNormalized.sourceNotes }
   const warnings = [...secNormalized.warnings]
@@ -829,12 +847,31 @@ export function finalizeNormalizedInputs(secNormalized, marketSnapshot, suppleme
   if (marketSnapshot.warning) warnings.push(marketSnapshot.warning)
 
   const applicable = applicableFinancialFields(inputs)
+  // Balance-sheet amounts no source returned are not zero: a bank with no debt line is not
+  // debt-free. When peer ratios are supplied (median field / market cap by sector and
+  // business model, computed from the screener universe), the missing amount is estimated
+  // from them and marked "estimated" - visible, overridable, never silently zero.
+  const estimated = {}
+  const marketCapForImputation = marketSnapshot.currentMarketCap || marketSnapshot.averageMarketCap || 0
+  if (sectorRatios && marketCapForImputation > 0) {
+    for (const field of IMPUTABLE_FIELDS) {
+      if (!applicable.includes(field) || availableFields.has(field)) continue
+      const ratio = peerRatio(sectorRatios, field, inputs.sector, inputs.businessModel)
+      if (ratio === null) continue
+      inputs[field] = round(ratio.value * marketCapForImputation, 2)
+      estimated[field] = { ratio: ratio.value, basis: ratio.basis, peers: ratio.peers }
+      availableFields.add(field)
+      providerByField.set(field, "Industry peer estimate")
+      sourceNotes[field] = `Estimated - no source reported it; industry median of ${round(ratio.value * 100, 1)}% of market value across ${ratio.peers} ${ratio.basis} peers, scaled to this company's market value. Override if you know the figure.`
+    }
+  }
   const missing = applicable.filter((field) => !availableFields.has(field))
   const fieldStatus = Object.fromEntries(applicable.map((field) => [
     field,
-    !availableFields.has(field) ? "missing" : Number(inputs[field]) === 0 ? "measured-zero" : "measured",
+    !availableFields.has(field) ? "missing" : estimated[field] ? "estimated" : Number(inputs[field]) === 0 ? "measured-zero" : "measured",
   ]))
   return {
+    estimated,
     inputs,
     sourceNotes,
     provenance,
@@ -850,7 +887,7 @@ export function finalizeNormalizedInputs(secNormalized, marketSnapshot, suppleme
   }
 }
 
-function applicableFinancialFields(inputs) {
+export function applicableFinancialFields(inputs) {
   const financial = inputs.businessModel === "Financial / Balance-Sheet Business"
   const fields = ["revenue", "revenueGrowth", "cash", "debt", "tangibleBookValue", "assetBackingValue", "roe", "rotce", "eps", "sharePrice", "sharesOutstanding", "dividendYield", "buybackYield"]
   if (!financial) fields.push("grossMargin", "marginChangeYoy", "opexRatio", "capexPct")
@@ -1064,7 +1101,8 @@ export async function ingestTicker(ticker, options = {}) {
   let marketSources = [yahoo, nasdaq?.marketSeries, alpha?.marketSeries].filter(Boolean)
   let shares = sec.inputs.sharesOutstanding || supplements.find((item) => item.inputs?.sharesOutstanding)?.inputs.sharesOutstanding || 0
   let marketSnapshot = normalizeMarketSeries(marketSources, shares)
-  let normalized = finalizeNormalizedInputs(sec, marketSnapshot, supplements)
+  const sectorRatios = options.sectorRatios || null
+  let normalized = finalizeNormalizedInputs(sec, marketSnapshot, supplements, sectorRatios)
 
   let fmp = null
   let usedFmp = false
@@ -1073,7 +1111,8 @@ export async function ingestTicker(ticker, options = {}) {
   // that don't pay one) shouldn't spend an FMP call - reserve the budget for companies that
   // are genuinely thin on data, plus the true last-resort case where nothing resolved at all.
   const missingThreshold = options.fmpMissingThreshold ?? 3
-  if (fmpApiKey && (normalized.missing.length >= missingThreshold || noStatementData)) {
+  const gapCount = normalized.missing.length + Object.keys(normalized.estimated || {}).length
+  if (fmpApiKey && (gapCount >= missingThreshold || noStatementData)) {
     usedFmp = true
     fmp = await fetchFmpSupplement(cacheKey, fmpApiKey).catch((error) => {
       providerWarnings.push(`Financial Modeling Prep unavailable: ${error.message}`)
@@ -1084,7 +1123,7 @@ export async function ingestTicker(ticker, options = {}) {
       marketSources = [...marketSources, fmp.marketSeries].filter(Boolean)
       shares = sec.inputs.sharesOutstanding || supplements.find((item) => item.inputs?.sharesOutstanding)?.inputs.sharesOutstanding || 0
       marketSnapshot = normalizeMarketSeries(marketSources, shares)
-      normalized = finalizeNormalizedInputs(sec, marketSnapshot, supplements)
+      normalized = finalizeNormalizedInputs(sec, marketSnapshot, supplements, sectorRatios)
     }
   }
 

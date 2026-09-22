@@ -44,6 +44,15 @@ async function readScreenerMeta() {
 }
 
 const screenerOverridesPath = path.join(root, "data/screener-overrides.json")
+const sectorRatiosPath = path.join(root, "data/sector-ratios.json")
+
+async function readSectorRatios() {
+  try {
+    return JSON.parse(await fs.readFile(sectorRatiosPath, "utf8")).groups || null
+  } catch {
+    return null
+  }
+}
 
 async function readScreenerOverrides() {
   try {
@@ -91,6 +100,7 @@ async function ingest(ticker) {
     secUserAgent,
     alphaVantageApiKey: process.env.ALPHA_VANTAGE_API_KEY,
     fmpApiKey: process.env.FMP_API_KEY,
+    sectorRatios: await readSectorRatios(),
   })
   value.ai = { enabled: aiEnabled, used: false }
   cache.set(cacheKey, { time: Date.now(), value })
@@ -144,6 +154,9 @@ const server = http.createServer(async (req, res) => {
     return res.end(ROBOTS_TXT)
   }
   if (url.pathname === "/api/config") return json(res, 200, { aiIngestionEnabled: aiEnabled })
+  if (url.pathname === "/failed-companies.json") return serveFile(res, path.join(root, "data/failed-companies.json"))
+  if (url.pathname === "/screener/" || url.pathname === "/screener") return serveFile(res, path.join(root, "dist/screener/index.html"))
+  if (url.pathname === "/screener-results.json") return serveFile(res, path.join(root, "dist/screener-results.json"))
   if (url.pathname === "/api/screener") {
     const [results, meta, overrides] = await Promise.all([readScreenerResults(), readScreenerMeta(), readScreenerOverrides()])
     return json(res, 200, { results, meta, overrides })

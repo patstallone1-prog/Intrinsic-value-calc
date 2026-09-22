@@ -39,6 +39,7 @@ async function readScreenerMetaSnapshot() {
 }
 const screenerResults = await readScreenerSnapshot()
 const screenerMeta = await readScreenerMetaSnapshot()
+const sectorRatios = await readFile(join(root, "data/sector-ratios.json"), "utf8").then((text) => JSON.parse(text).groups || null).catch(() => null)
 
 const robotsTxt = `User-agent: *
 Allow: /
@@ -74,6 +75,7 @@ const page = ${JSON.stringify(page)}
 const robotsTxt = ${JSON.stringify(robotsTxt)}
 const screenerResults = ${JSON.stringify(screenerResults)}
 const screenerMeta = ${JSON.stringify(screenerMeta)}
+const sectorRatios = ${JSON.stringify(sectorRatios)}
 const cache = new Map()
 const AI_ENABLED = false
 
@@ -93,6 +95,7 @@ async function ingest(ticker, env) {
     secUserAgent: env.SEC_USER_AGENT || "eval-system-2 financial normalization contact@example.com",
     alphaVantageApiKey: env.ALPHA_VANTAGE_API_KEY,
     fmpApiKey: env.FMP_API_KEY,
+    sectorRatios,
   })
   value.ai = { enabled: AI_ENABLED, used: false }
   cache.set(cacheKey, { time: Date.now(), value })
@@ -128,6 +131,7 @@ await copyFile(join(root, "index.html"), join(dist, "index.html"))
 // Static snapshot for hosts with no API: the page falls back to this when /api/screener 404s.
 await writeFile(join(dist, "screener-results.json"), JSON.stringify(screenerResults))
 await writeFile(join(dist, "robots.txt"), robotsTxt)
+await copyFile(join(root, "data/failed-companies.json"), join(dist, "failed-companies.json")).catch(() => {})
 await writeFile(join(dist, ".nojekyll"), "")
 await writeFile(join(root, "screener-results.json"), JSON.stringify(screenerResults))
 await writeFile(join(workerDir, "index.js"), worker)

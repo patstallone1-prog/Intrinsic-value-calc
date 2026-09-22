@@ -307,4 +307,17 @@ const krwSec = normalizeSecCompany({ company: { ticker: "KRW", title: "Won Filer
 assert.equal(krwSec.inputs.revenue, 0, "KRW-denominated revenue must not be treated as dollars")
 assert.ok(!krwSec.availableFields.includes("revenue") && !krwSec.availableFields.includes("assetBackingValue"))
 
+// Peer-scaled estimates: a balance-sheet amount no source reported is estimated from the
+// industry median ratio to market value and marked "estimated", never silently zero.
+const ratios = { "sector::Prepackaged Software": { debt: { median: 0.25, count: 12 } }, all: { debt: { median: 0.4, count: 500 }, cash: { median: 0.1, count: 500 } } }
+const estimatedFinal = finalizeNormalizedInputs(interestSec, market, [], ratios)
+assert.equal(estimatedFinal.fieldStatus.debt, "estimated")
+assert.equal(estimatedFinal.inputs.debt, 0.4 * market.currentMarketCap, "falls through to the market-wide median when the sector group is too small or absent")
+assert.ok(estimatedFinal.sourceNotes.debt.startsWith("Estimated"))
+assert.ok(!estimatedFinal.missing.includes("debt"))
+const sectorFinal = finalizeNormalizedInputs({ ...interestSec, inputs: { ...interestSec.inputs, sector: "Prepackaged Software" } }, market, [], ratios)
+assert.equal(sectorFinal.inputs.debt, 0.25 * market.currentMarketCap, "the sector group is preferred when it has enough peers")
+const measuredFinal = finalizeNormalizedInputs(sec, market, [], ratios)
+assert.equal(measuredFinal.fieldStatus.debt, "measured", "a measured value is never replaced by an estimate")
+
 console.log("financial ingestion tests passed")

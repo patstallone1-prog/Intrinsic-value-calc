@@ -65,6 +65,13 @@ const state = {
   screenerSubmitted: new Set(),
   screenerFormStatus: "",
   screenerFormPage: 1,
+  unpriced: null,
+  unpricedLoading: false,
+  unpricedSearch: "",
+  unpricedCategory: "All",
+  unpricedShown: 40,
+  unpricedDrafts: loadUnpricedDrafts(),
+  unpricedStatus: "",
 }
 
 const fields = [
@@ -376,6 +383,8 @@ function renderField(field) {
   const isMissingNumeric = (sourceStatus === "missing" || unknownAfterIngestion) && typeof value === "number" && value === 0
   const sourceText = sourceStatus === "measured-zero"
     ? "Measured zero from source"
+    : sourceStatus === "estimated"
+      ? `Estimated from industry peers - ${formatValue(value, field.type)} - override if known`
     : sourceStatus === "missing"
       ? "Missing - enter or verify"
       : unknownAfterIngestion
@@ -409,7 +418,7 @@ function renderField(field) {
     <label class="field ${isNegative ? "field--negative" : ""}">
       <span>${field.label}${isNegative ? ` <em class="negative-badge">negative</em>` : ""}</span>
       <input data-field="${field.key}" type="${field.type === "text" ? "text" : "number"}" value="${isMissingNumeric ? "" : escapeHtml(inputDisplayValue(value, field.type))}" min="${min}" max="${max}" step="${step}" />
-      <small class="${sourceStatus === "missing" || unknownAfterIngestion ? "field-source--missing" : sourceStatus === "measured-zero" || sourceStatus === "manual-zero" ? "field-source--verified" : isNegative ? "field-source--negative" : ""}">${escapeHtml(sourceText)}</small>
+      <small class="${sourceStatus === "missing" || unknownAfterIngestion ? "field-source--missing" : sourceStatus === "estimated" ? "field-source--estimated" : sourceStatus === "measured-zero" || sourceStatus === "manual-zero" ? "field-source--verified" : isNegative ? "field-source--negative" : ""}">${escapeHtml(sourceText)}</small>
     </label>
   `
 }
@@ -545,7 +554,26 @@ function unfilledInputFields() {
 
 function renderNeedsAttention() {
   const missingFields = unfilledInputFields()
-  if (!missingFields.length) return ""
+  const estimatedFields = Object.entries(state.ingestionAudit?.fieldStatus || {})
+    .filter(([, status]) => status === "estimated")
+    .map(([key]) => fieldMap[key])
+    .filter(Boolean)
+  if (!missingFields.length && !estimatedFields.length) return ""
+  if (!missingFields.length) {
+    return `
+      <section class="panel needs-attention-panel needs-attention-panel--soft">
+        <div class="section-title">
+          <div>
+            <p class="eyebrow">Estimated from industry peers</p>
+            <h2>${estimatedFields.length} input${estimatedFields.length === 1 ? "" : "s"} estimated - override if you know the figure</h2>
+          </div>
+          <button class="primary" data-tab="results">See results</button>
+        </div>
+        <p class="muted">No source reported these, so each is the industry median (share of market value among peers with the same sector and business model) scaled to this company. They count as filled, but a real figure is always better.</p>
+        <div class="field-grid">${estimatedFields.map(renderField).join("")}</div>
+      </section>
+    `
+  }
   const groups = new Map()
   for (const field of missingFields) {
     const group = field.group || "Other"
@@ -568,6 +596,12 @@ function renderNeedsAttention() {
           <div class="field-grid">${groupFields.map(renderField).join("")}</div>
         </div>
       `).join("")}
+      ${estimatedFields.length ? `
+        <div class="needs-attention-group">
+          <h3>Estimated from industry peers - override if known <span class="muted">${estimatedFields.length}</span></h3>
+          <div class="field-grid">${estimatedFields.map(renderField).join("")}</div>
+        </div>
+      ` : ""}
       <div class="intake-actions">
         <button class="primary" data-tab="results">Run valuation with these inputs</button>
       </div>
@@ -1016,14 +1050,14 @@ function applyScreenerOverrides(row, overrides) {
   return updated
 }
 
-// A fair value more than 8x above or below the observed market value is almost always a
+// A fair value more than 5x above or below the observed market value is almost always a
 // data problem (ADR ratio, share-class count, a supplement in the wrong currency) rather
 // than a real 700% mispricing, so those rows are flagged and hidden by default.
 function flagSuspect(row) {
   const observed = row.observedMarketCap || 0
   const fair = row.fairCommonEquity || 0
   const ratio = observed > 0 && fair > 0 ? fair / observed : 1
-  return { ...row, suspect: observed <= 0 || ratio > 8 || ratio < 1 / 8 }
+  return { ...row, suspect: observed <= 0 || ratio > 5 || ratio < 0.2 }
 }
 
 function decorateScreenerRows(rows, overrides) {
@@ -1155,6 +1189,115 @@ function renderScreenerFillForm(sorted) {
         </div>
       ` : ""}
     </section>
+  `
+}
+
+const UNPRICED_DRAFTS_KEY = "eval-system-2-unpriced-drafts"
+const UNPRICED_FIELDS = ["sharePrice", "sharesOutstanding", "revenue", "revenueGrowth", "grossMargin", "opexRatio", "cash", "debt", "tangibleBookValue", "eps", "dividendYield"]
+
+function loadUnpricedDrafts() {
+  try {
+    return JSON.parse(localStorage.getItem(UNPRICED_DRAFTS_KEY) || "{}") || {}
+  } catch {
+    return {}
+  }
+}
+
+function saveUnpricedDrafts() {
+  try {
+    localStorage.setItem(UNPRICED_DRAFTS_KEY, JSON.stringify(state.unpricedDrafts))
+  } catch {
+    // Browser storage is a convenience only.
+  }
+}
+
+async function loadUnpriced() {
+  if (state.unpricedLoading) return
+  state.unpricedLoading = true
+  render()
+  try {
+    const response = await fetch("failed-companies.json")
+    state.unpriced = response.ok ? await response.json() : []
+  } catch {
+    state.unpriced = []
+  } finally {
+    state.unpricedLoading = false
+    render()
+  }
+}
+
+function unpricedCardValues(ticker) {
+  const card = document.querySelector(`[data-unpriced-card="${ticker}"]`)
+  if (!card) return null
+  const values = {}
+  card.querySelectorAll("[data-unpriced-field]").forEach((input) => {
+    const key = input.dataset.unpricedField
+    if (input.value === "") return
+    const field = fieldMap[key]
+    if (!field) return
+    values[key] = parseInputValue(input.value, field.type, input.checked)
+  })
+  return values
+}
+
+function renderUnpriced() {
+  if (state.unpriced === null) {
+    if (!state.unpricedLoading) loadUnpriced()
+    return `<div class="results-layout"><section class="panel"><div class="section-title"><h2>Unpriced Companies</h2></div><p class="muted">Loading the companies the screener could not price...</p></section></div>`
+  }
+  const rows = state.unpriced
+  const categories = ["All", ...new Set(rows.map((row) => row.category))]
+  const search = state.unpricedSearch.trim().toLowerCase()
+  const filtered = rows.filter((row) => (state.unpricedCategory === "All" || row.category === state.unpricedCategory)
+    && (!search || row.ticker.toLowerCase().includes(search) || (row.title || "").toLowerCase().includes(search)))
+  const visible = filtered.slice(0, state.unpricedShown)
+  const drafted = Object.keys(state.unpricedDrafts).length
+  return `
+    <div class="results-layout">
+      <section class="panel">
+        <div class="section-title">
+          <div>
+            <p class="eyebrow">No provider returned statements for these</p>
+            <h2>${rows.length.toLocaleString()} companies the screener could not price</h2>
+          </div>
+        </div>
+        <p class="muted">Mostly foreign ADRs and OTC lines that file no US-GAAP XBRL, plus funds, trusts and shells. Enter what you know for one (money in USD, percentages as e.g. 12.5) and load it straight into the valuation engine - your entries are kept in this browser${drafted ? ` (${drafted} saved so far)` : ""}.</p>
+        <div class="screener-filters">
+          <label class="field field--wide"><span>Search</span><input data-unpriced-search type="text" placeholder="Ticker or company" value="${escapeHtml(state.unpricedSearch)}" /></label>
+          <div class="screener-filter-actions">${categories.map((category) => `<button class="ghost ${state.unpricedCategory === category ? "ghost--accent" : ""}" data-action="unpriced-category" data-category="${escapeHtml(category)}">${escapeHtml(category)}${category !== "All" ? ` (${rows.filter((row) => row.category === category).length})` : ""}</button>`).join("")}</div>
+        </div>
+        ${state.unpricedStatus ? `<div class="status-line">${escapeHtml(state.unpricedStatus)}</div>` : ""}
+        <p class="muted">${filtered.length.toLocaleString()} match.</p>
+        <div class="fill-grid">
+          ${visible.map((row) => {
+            const draft = state.unpricedDrafts[row.ticker] || {}
+            return `
+              <article class="fill-card" data-unpriced-card="${escapeHtml(row.ticker)}">
+                <header>
+                  <strong>${escapeHtml(row.ticker)}</strong>
+                  <span>${escapeHtml(row.title || "")}</span>
+                  <small>${escapeHtml(row.category)}${draft.savedAt ? ` - saved ${new Date(draft.savedAt).toLocaleDateString()}` : ""}</small>
+                </header>
+                <div class="fill-fields">
+                  <label class="field"><span>Sector</span><select data-unpriced-field="sector">${TAXONOMY.sectors.map((item) => option(item, draft.sector || "Other")).join("")}</select></label>
+                  <label class="field"><span>Business model</span><select data-unpriced-field="businessModel">${TAXONOMY.businessModels.map((item) => option(item, draft.businessModel || "Other")).join("")}</select></label>
+                  ${UNPRICED_FIELDS.map((key) => {
+                    const field = fieldMap[key]
+                    const value = draft[key]
+                    return `<label class="field"><span>${escapeHtml(field.label)}${field.type === "percent" ? " (%)" : field.type === "money" ? " (USD)" : ""}</span><input data-unpriced-field="${key}" type="number" step="any" value="${value === undefined ? "" : escapeHtml(inputDisplayValue(value, field.type))}" /></label>`
+                  }).join("")}
+                </div>
+                <div class="intake-actions">
+                  <button class="primary" data-action="unpriced-value" data-ticker="${escapeHtml(row.ticker)}">Value ${escapeHtml(row.ticker)}</button>
+                  <button class="ghost" data-action="unpriced-save" data-ticker="${escapeHtml(row.ticker)}">Save draft</button>
+                </div>
+              </article>
+            `
+          }).join("")}
+        </div>
+        ${filtered.length > visible.length ? `<div class="intake-actions"><button class="ghost" data-action="unpriced-more">Show 40 more (${filtered.length - visible.length} left)</button></div>` : ""}
+      </section>
+    </div>
   `
 }
 
@@ -1291,7 +1434,7 @@ function renderScreener() {
           </label>
           <label class="field field--checkbox">
             <input data-screener-filter="hideSuspect" type="checkbox" ${f.hideSuspect ? "checked" : ""} />
-            <span>Hide likely data errors (fair value &gt;8x off market)</span>
+            <span>Hide likely data errors (fair value &gt;5x off market)</span>
           </label>
           <div class="screener-filter-actions">
             <button class="ghost" data-action="screener-cap" data-min="200000" data-max="">Mega &gt;$200B</button>
@@ -1315,7 +1458,7 @@ function renderScreener() {
           <tbody>
             ${sorted.slice(0, 500).map((row) => `
               <tr class="${row.manualFilled?.length ? "row--manual" : ""}">
-                <td>${escapeHtml(row.ticker || "")}${row.suspect ? ` <span class="pill pill--warn" title="Fair value is more than 8x away from market value - probably a share-count, ADR-ratio or currency mismatch">check</span>` : ""}</td>
+                <td>${escapeHtml(row.ticker || "")}${row.suspect ? ` <span class="pill pill--warn" title="Fair value is more than 5x away from market value - probably a share-count, ADR-ratio or currency mismatch">check</span>` : ""}</td>
                 <td>${escapeHtml(row.companyName || "")}</td>
                 <td>${escapeHtml(row.sector || "")}</td>
                 <td>${moneyHtml(row.currentPrice || 0)}</td>
@@ -1350,13 +1493,16 @@ function render() {
         <h1>Valuation Engine</h1>
       </div>
       <nav>
+        <span class="nav-group">Value one company</span>
         <button data-tab="inputs" class="${state.activeTab === "inputs" ? "active" : ""}">Inputs</button>
         <button data-tab="results" class="${state.activeTab === "results" ? "active" : ""}">Results</button>
         <button data-tab="audit" class="${state.activeTab === "audit" ? "active" : ""}">Audit</button>
-        <button data-tab="screener" class="${state.activeTab === "screener" ? "active" : ""}">Screened Companies</button>
+        <span class="nav-group">Every public company</span>
+        <a class="nav-link" href="screener/">Full Screener - filter &amp; sort all companies</a>
+        <button data-tab="screener" class="${state.activeTab === "screener" ? "active" : ""}">Screened Companies (in-app table)</button>
+        <button data-tab="unpriced" class="${state.activeTab === "unpriced" ? "active" : ""}">Unpriced Companies - fill in &amp; value</button>
+        <a class="nav-link" href="https://claude.ai/artifact/TgdCeXkoXQmXQda2Cxdour" target="_blank" rel="noopener">Triage Desk (shared fill-in sheet)</a>
       </nav>
-      <button class="primary primary--sidebar" data-tab="screener">Browse ${state.screenerResults ? state.screenerResults.length.toLocaleString() : "all"} screened companies</button>
-      <a class="ghost ghost--sidebar ghost--link" href="screener/">Open the standalone screener site</a>
       <button class="ghost ghost--sidebar" data-action="reset-draft">Reset Draft</button>
       <div class="fixture-list">
         <span>Scenarios</span>
@@ -1375,7 +1521,7 @@ function render() {
           <button class="primary" data-tab="results">Run Valuation</button>
         </div>
       </header>
-      ${state.activeTab === "inputs" ? renderAutoIntake() : state.activeTab === "audit" ? renderAudit(result) : state.activeTab === "screener" ? renderScreener() : renderResults(result)}
+      ${state.activeTab === "inputs" ? renderAutoIntake() : state.activeTab === "audit" ? renderAudit(result) : state.activeTab === "screener" ? renderScreener() : state.activeTab === "unpriced" ? renderUnpriced() : renderResults(result)}
     </main>
   `
 
@@ -1391,6 +1537,17 @@ document.addEventListener("input", (event) => {
   if (event.target.dataset.ticker !== undefined) {
     state.ticker = event.target.value.toUpperCase().replace(/[^A-Z0-9.-]/g, "")
     event.target.value = state.ticker
+    return
+  }
+  if (event.target.dataset.unpricedSearch !== undefined) {
+    state.unpricedSearch = event.target.value
+    state.unpricedShown = 40
+    render()
+    const input = document.querySelector("[data-unpriced-search]")
+    if (input) {
+      input.focus()
+      input.setSelectionRange(input.value.length, input.value.length)
+    }
     return
   }
   if (event.target.dataset.screenerSearch !== undefined) {
@@ -1544,6 +1701,37 @@ document.addEventListener("click", async (event) => {
     state.screenerFilters = { sector: "", minCapM: "", maxCapM: "", minCoverage: 0, minUpside: "", basis: "", onlyComplete: false, hideSuspect: true }
     state.screenerSearch = ""
     state.screenerFormPage = 1
+    render()
+  }
+  if (action === "unpriced-category") {
+    state.unpricedCategory = target.dataset.category
+    state.unpricedShown = 40
+    render()
+  }
+  if (action === "unpriced-more") {
+    state.unpricedShown += 40
+    render()
+  }
+  if (action === "unpriced-save" || action === "unpriced-value") {
+    const ticker = target.dataset.ticker
+    const values = unpricedCardValues(ticker)
+    if (!values) return
+    const row = (state.unpriced || []).find((item) => item.ticker === ticker)
+    state.unpricedDrafts = { ...state.unpricedDrafts, [ticker]: { ...values, savedAt: new Date().toISOString() } }
+    saveUnpricedDrafts()
+    if (action === "unpriced-save") {
+      state.unpricedStatus = `Saved your entries for ${ticker}.`
+      render()
+      return
+    }
+    state.inputs = normalizeInputs({ ...cleanIngestionBase(state.inputs), companyName: row?.title || ticker, capitalStatus: "Public", ...values })
+    state.ticker = ticker
+    state.ingestionAudit = null
+    state.marketSnapshot = null
+    state.sourceNotes = Object.fromEntries(Object.keys(values).map((key) => [key, "Entered by hand on the Unpriced Companies page"]))
+    state.ingestionStatus = `${row?.title || ticker} loaded from your entries; review the remaining inputs or open results.`
+    state.activeTab = "results"
+    saveDraft()
     render()
   }
   if (action === "more-screener-forms") {

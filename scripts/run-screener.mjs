@@ -84,22 +84,43 @@ async function loadProcessedTickers() {
   }
 }
 
+// Issuers whose "company" is a fund, ETN/ETF sponsor, trust or SPAC shell have no operating
+// business to value; they are excluded from the universe rather than priced as if they did.
+const NON_OPERATING_TITLE = /\b(ETF|ETN|ETNs)\b|proshares|ishares|direxion|vaneck|wisdomtree|graniteshares|invesco .*trust|spdr|select sector|volatility|leveraged|acquisition corp|acquisition co\b|acquisition company|capital trust\b|royalty trust|income trust|municipal|tax-exempt|closed[- ]end|\bfund\b|\btrust\b.*\b(series|units|shares)\b/i
+
 async function loadTickerUniverse() {
   if (TICKER_FILTER) return [...TICKER_FILTER].map((ticker) => ({ ticker, title: ticker, cik: "" }))
-  const response = await fetch("https://www.sec.gov/files/company_tickers.json", {
-    headers: { "User-Agent": SEC_UA, Accept: "application/json" },
-  })
-  if (!response.ok) throw new Error(`SEC ticker list request failed: ${response.status}`)
-  const raw = await response.json()
-  const seen = new Set()
-  const rows = []
+  const headers = { "User-Agent": SEC_UA, Accept: "application/json" }
+  const [tickersRes, exchangeRes] = await Promise.all([
+    fetch("https://www.sec.gov/files/company_tickers.json", { headers }),
+    fetch("https://www.sec.gov/files/company_tickers_exchange.json", { headers }).catch(() => null),
+  ])
+  if (!tickersRes.ok) throw new Error(`SEC ticker list request failed: ${tickersRes.status}`)
+  const raw = await tickersRes.json()
+  const exchangeByTicker = new Map()
+  if (exchangeRes?.ok) {
+    const payload = await exchangeRes.json()
+    const idx = Object.fromEntries((payload.fields || []).map((field, index) => [field, index]))
+    for (const row of payload.data || []) exchangeByTicker.set(String(row[idx.ticker] || "").toUpperCase(), row[idx.exchange] || "")
+  }
+  // One operating company per CIK: the SEC list carries every listed instrument of an issuer
+  // (preferreds, exchange-traded notes, foreign OTC lines of the same shares). Each would
+  // otherwise be valued with the issuer's financials against the instrument's own price. Keep
+  // the primary listing - the first entry on a major exchange, else the first entry.
+  const exchangeRank = { NYSE: 0, Nasdaq: 0, CBOE: 2, OTC: 3 }
+  const byCik = new Map()
+  let order = 0
   for (const row of Object.values(raw)) {
     const ticker = String(row.ticker || "").toUpperCase()
-    if (!ticker || seen.has(ticker) || !/^[A-Z]{1,6}(\.[A-Z])?$/.test(ticker)) continue
-    seen.add(ticker)
-    rows.push({ ticker, title: row.title, cik: String(row.cik_str).padStart(10, "0") })
+    if (!ticker || !/^[A-Z]{1,6}(\.[A-Z])?$/.test(ticker)) continue
+    if (NON_OPERATING_TITLE.test(row.title || "")) continue
+    const cik = String(row.cik_str).padStart(10, "0")
+    const exchange = exchangeByTicker.get(ticker) || ""
+    const candidate = { ticker, title: row.title, cik, exchange, rank: exchangeRank[exchange] ?? 4, order: order++ }
+    const current = byCik.get(cik)
+    if (!current || candidate.rank < current.rank || (candidate.rank === current.rank && candidate.order < current.order)) byCik.set(cik, candidate)
   }
-  return rows
+  return [...byCik.values()].sort((a, b) => a.order - b.order).map(({ ticker, title, cik }) => ({ ticker, title, cik }))
 }
 
 async function ingestAndValue(ticker) {
